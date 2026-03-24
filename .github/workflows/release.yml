@@ -1,12 +1,13 @@
 name: Release
+run-name: release ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       tag:
@@ -55,6 +56,8 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             tag="${{ inputs.tag }}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
           else
             tag="${GITHUB_REF_NAME}"
           fi
@@ -122,6 +125,8 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
