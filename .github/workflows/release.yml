@@ -19,23 +19,28 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive_ext: tar.gz
+            os_name: linux
+            arch_name: x86
             binary_name: organize
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            archive_ext: tar.gz
+            os_name: linux
+            arch_name: arm64
             binary_name: organize
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive_ext: zip
+            os_name: windows
+            arch_name: x86
             binary_name: organize.exe
           - os: windows-latest
             target: aarch64-pc-windows-msvc
-            archive_ext: zip
+            os_name: windows
+            arch_name: arm64
             binary_name: organize.exe
           - os: macos-14
             target: aarch64-apple-darwin
-            archive_ext: tar.gz
+            os_name: darwin
+            arch_name: arm64
             binary_name: organize
 
     runs-on: ${{ matrix.os }}
@@ -46,13 +51,17 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.tag }}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF_NAME}"
           fi
 
+          version="${tag#v}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -76,26 +85,24 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          name="organize-${{ steps.vars.outputs.tag }}-${{ matrix.target }}"
+          name="organize-${{ steps.vars.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch_name }}"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.binary_name }}"
-          tar -C dist -czf "${name}.tar.gz" "${{ matrix.binary_name }}"
+          (cd dist && zip -q "../${name}.zip" "${{ matrix.binary_name }}")
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $name = "organize-${{ steps.vars.outputs.tag }}-${{ matrix.target }}"
+          $name = "organize-${{ steps.vars.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch_name }}"
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.binary_name }}"
           Compress-Archive -Path "dist/${{ matrix.binary_name }}" -DestinationPath "${name}.zip" -Force
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.target }}
-          path: |
-            *.tar.gz
-            *.zip
+          path: '*.zip'
 
   publish:
     needs: build
@@ -115,7 +122,7 @@ jobs:
           fi
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: release-assets
           merge-multiple: true
