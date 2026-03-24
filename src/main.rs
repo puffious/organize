@@ -11,7 +11,7 @@ mod tmdb;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, ScanType};
-use config::{AppConfig, EffectiveOperationMode, MediaType, NonMediaMode};
+use config::{AppConfig, ConflictMode, EffectiveOperationMode, MediaType, NonMediaMode};
 use parser::{parse_movie, parse_show, MediaInfo};
 use planner::{build_movie_plan, build_show_plan, Plan};
 use scanner::scan_source;
@@ -19,6 +19,13 @@ use std::collections::HashSet;
 use std::path::Path;
 use tmdb::MetadataLookup;
 use tracing::{info, warn};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictPolicy {
+    Skip,
+    Overwrite,
+    Abort,
+}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -98,12 +105,15 @@ fn run_show(
         return Ok(());
     }
 
+    let conflict_policy = resolve_conflict_policy(args, config);
+    preflight_conflicts(&plan, conflict_policy)?;
+
     if !yes_mode && !prompt::confirm_execute()? {
         info!("Operation cancelled by user");
         return Ok(());
     }
 
-    let result = executor::execute_plan(&plan, args.overwrite)?;
+    let result = executor::execute_plan(&plan, conflict_policy == ConflictPolicy::Overwrite)?;
     println!(
         "Execution: {} succeeded, {} failed, {} skipped",
         result.succeeded, result.failed, result.skipped
@@ -171,12 +181,15 @@ fn run_movie(
         return Ok(());
     }
 
+    let conflict_policy = resolve_conflict_policy(args, config);
+    preflight_conflicts(&plan, conflict_policy)?;
+
     if !yes_mode && !prompt::confirm_execute()? {
         info!("Operation cancelled by user");
         return Ok(());
     }
 
-    let result = executor::execute_plan(&plan, args.overwrite)?;
+    let result = executor::execute_plan(&plan, conflict_policy == ConflictPolicy::Overwrite)?;
     println!(
         "Execution: {} succeeded, {} failed, {} skipped",
         result.succeeded, result.failed, result.skipped
@@ -329,6 +342,39 @@ fn truncate_middle(value: &str, max_len: usize) -> String {
     format!("{}...{}", start, end)
 }
 
+fn resolve_conflict_policy(args: &cli::ShowMovieArgs, config: &AppConfig) -> ConflictPolicy {
+    if args.overwrite {
+        return ConflictPolicy::Overwrite;
+    }
+
+    match args.on_conflict {
+        Some(cli::ConflictArg::Overwrite) => ConflictPolicy::Overwrite,
+        Some(cli::ConflictArg::Abort) => ConflictPolicy::Abort,
+        Some(cli::ConflictArg::Skip) => ConflictPolicy::Skip,
+        None => match config.general.conflict_mode {
+            ConflictMode::Skip => ConflictPolicy::Skip,
+            ConflictMode::Overwrite => ConflictPolicy::Overwrite,
+            ConflictMode::Abort => ConflictPolicy::Abort,
+        },
+    }
+}
+
+fn preflight_conflicts(plan: &Plan, policy: ConflictPolicy) -> Result<()> {
+    if plan.conflicts.is_empty() {
+        return Ok(());
+    }
+
+    match policy {
+        ConflictPolicy::Skip | ConflictPolicy::Overwrite => Ok(()),
+        ConflictPolicy::Abort => {
+            anyhow::bail!(
+                "aborting due to {} conflict(s); rerun with --on-conflict skip or --on-conflict overwrite",
+                plan.conflicts.len()
+            )
+        }
+    }
+}
+
 fn resolve_year(
     title: Option<&str>,
     media_type: MediaType,
@@ -377,7 +423,33 @@ fn is_extras_folder(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_middle;
+    use super::{preflight_conflicts, resolve_conflict_policy, truncate_middle, ConflictPolicy};
+    use crate::config::{AppConfig, ConflictMode};
+    use crate::planner::Plan;
+
+    fn args(overwrite: bool, on_conflict: Option<crate::cli::ConflictArg>) -> crate::cli::ShowMovieArgs {
+        crate::cli::ShowMovieArgs {
+            source: std::path::PathBuf::from("/tmp/src"),
+            destination: std::path::PathBuf::from("/tmp/dst"),
+            copy: false,
+            link: false,
+            symlink: false,
+            overwrite,
+            on_conflict,
+            clean: false,
+            title: None,
+            year: None,
+            non_media: None,
+            dry_run: false,
+            yes: false,
+        }
+    }
+
+    fn config_with_conflict_mode(mode: ConflictMode) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        cfg.general.conflict_mode = mode;
+        cfg
+    }
 
     #[test]
     fn truncate_middle_short_string_unchanged() {
@@ -390,5 +462,50 @@ mod tests {
         let out = truncate_middle(value, 24);
         assert!(out.contains("..."));
         assert!(out.len() <= 25);
+    }
+
+    #[test]
+    fn conflict_policy_overwrite_flag_wins() {
+        let a = args(true, Some(crate::cli::ConflictArg::Abort));
+        let cfg = config_with_conflict_mode(ConflictMode::Skip);
+        assert_eq!(resolve_conflict_policy(&a, &cfg), ConflictPolicy::Overwrite);
+    }
+
+    #[test]
+    fn conflict_policy_uses_on_conflict_value() {
+        let cfg = config_with_conflict_mode(ConflictMode::Skip);
+        assert_eq!(
+            resolve_conflict_policy(&args(false, Some(crate::cli::ConflictArg::Skip)), &cfg),
+            ConflictPolicy::Skip
+        );
+        assert_eq!(
+            resolve_conflict_policy(&args(false, Some(crate::cli::ConflictArg::Overwrite)), &cfg),
+            ConflictPolicy::Overwrite
+        );
+        assert_eq!(
+            resolve_conflict_policy(&args(false, Some(crate::cli::ConflictArg::Abort)), &cfg),
+            ConflictPolicy::Abort
+        );
+    }
+
+    #[test]
+    fn conflict_policy_falls_back_to_config() {
+        let args = args(false, None);
+        let cfg_overwrite = config_with_conflict_mode(ConflictMode::Overwrite);
+        let cfg_abort = config_with_conflict_mode(ConflictMode::Abort);
+        let cfg_skip = config_with_conflict_mode(ConflictMode::Skip);
+
+        assert_eq!(resolve_conflict_policy(&args, &cfg_overwrite), ConflictPolicy::Overwrite);
+        assert_eq!(resolve_conflict_policy(&args, &cfg_abort), ConflictPolicy::Abort);
+        assert_eq!(resolve_conflict_policy(&args, &cfg_skip), ConflictPolicy::Skip);
+    }
+
+    #[test]
+    fn preflight_conflicts_aborts_when_configured() {
+        let mut plan = Plan::default();
+        plan.conflicts.push(std::path::PathBuf::from("/tmp/existing.mkv"));
+        assert!(preflight_conflicts(&plan, ConflictPolicy::Abort).is_err());
+        assert!(preflight_conflicts(&plan, ConflictPolicy::Skip).is_ok());
+        assert!(preflight_conflicts(&plan, ConflictPolicy::Overwrite).is_ok());
     }
 }

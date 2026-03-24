@@ -48,6 +48,9 @@ pub struct ShowMovieArgs {
     #[arg(long)]
     pub overwrite: bool,
 
+    #[arg(long, value_enum)]
+    pub on_conflict: Option<ConflictArg>,
+
     #[arg(long)]
     pub clean: bool,
 
@@ -85,4 +88,11 @@ pub enum ScanType {
 pub enum NonMediaArg {
     Keep,
     Ignore,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConflictArg {
+    Skip,
+    Overwrite,
+    Abort,
 }

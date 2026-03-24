@@ -140,6 +140,7 @@ pub struct GeneralConfig {
     pub default_mode: String,
     pub auto_confirm: bool,
     pub clean_empty_dirs: bool,
+    pub conflict_mode: ConflictMode,
     pub log_file: Option<PathBuf>,
 }
 
@@ -149,6 +150,7 @@ impl Default for GeneralConfig {
             default_mode: "move".to_string(),
             auto_confirm: false,
             clean_empty_dirs: false,
+            conflict_mode: ConflictMode::Skip,
             log_file: None,
         }
     }
@@ -165,10 +167,21 @@ impl GeneralConfig {
         if let Some(v) = incoming.clean_empty_dirs {
             self.clean_empty_dirs = v;
         }
+        if let Some(v) = incoming.conflict_mode {
+            self.conflict_mode = v;
+        }
         if let Some(v) = incoming.log_file {
             self.log_file = if v.is_empty() { None } else { Some(v.into()) };
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConflictMode {
+    Skip,
+    Overwrite,
+    Abort,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -311,6 +324,7 @@ struct PartialGeneralConfig {
     default_mode: Option<String>,
     auto_confirm: Option<bool>,
     clean_empty_dirs: Option<bool>,
+    conflict_mode: Option<ConflictMode>,
     log_file: Option<String>,
 }
 
@@ -348,4 +362,44 @@ fn load_file(path: &PathBuf) -> Result<PartialConfig> {
 
 fn global_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("organize").join("config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConflictMode, GeneralConfig, PartialGeneralConfig};
+
+    #[test]
+    fn general_merge_applies_conflict_mode_override() {
+        let mut general = GeneralConfig::default();
+        assert_eq!(general.conflict_mode, ConflictMode::Skip);
+
+        general.merge(PartialGeneralConfig {
+            default_mode: None,
+            auto_confirm: None,
+            clean_empty_dirs: None,
+            conflict_mode: Some(ConflictMode::Abort),
+            log_file: None,
+        });
+
+        assert_eq!(general.conflict_mode, ConflictMode::Abort);
+    }
+
+    #[test]
+    fn general_merge_ignores_absent_fields() {
+        let mut general = GeneralConfig::default();
+        general.default_mode = "copy".to_string();
+        general.auto_confirm = true;
+
+        general.merge(PartialGeneralConfig {
+            default_mode: None,
+            auto_confirm: None,
+            clean_empty_dirs: None,
+            conflict_mode: None,
+            log_file: None,
+        });
+
+        assert_eq!(general.default_mode, "copy");
+        assert!(general.auto_confirm);
+        assert_eq!(general.conflict_mode, ConflictMode::Skip);
+    }
 }

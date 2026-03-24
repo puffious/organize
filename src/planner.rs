@@ -121,6 +121,7 @@ pub fn build_movie_plan(
 ) -> Result<Plan> {
     let mut plan = Plan::default();
     let mut parent_to_folder = HashMap::<PathBuf, PathBuf>::new();
+    let mut video_key_to_folder = HashMap::<(PathBuf, String), PathBuf>::new();
     let mut default_target_folder: Option<PathBuf> = None;
 
     for info in parsed {
@@ -155,7 +156,12 @@ pub fn build_movie_plan(
         }
 
         if let Some(parent) = src.parent() {
-            parent_to_folder.insert(parent.to_path_buf(), target_folder);
+            parent_to_folder
+                .entry(parent.to_path_buf())
+                .or_insert_with(|| target_folder.clone());
+            if let Some(stem) = lower_stem(&src) {
+                video_key_to_folder.insert((parent.to_path_buf(), stem), target_folder.clone());
+            }
         }
 
         plan.operations.push(Operation {
@@ -167,12 +173,39 @@ pub fn build_movie_plan(
 
     if let NonMediaPolicy::Keep = non_media_mode {
         let fallback = default_target_folder.clone();
-        for item in scan
-            .subtitle_files
-            .iter()
-            .chain(scan.audio_files.iter())
-            .chain(scan.other_files.iter())
-        {
+        for item in scan.subtitle_files.iter().chain(scan.audio_files.iter()) {
+            if let Some(parent) = item.path.parent() {
+                let parent_buf = parent.to_path_buf();
+                if let Some(stem) = lower_stem(&item.path) {
+                    if let Some(target) = video_key_to_folder.get(&(parent_buf.clone(), stem)) {
+                        plan.operations.push(Operation {
+                            source: item.path.clone(),
+                            destination: target.join(&item.file_name),
+                            kind: mode.into(),
+                        });
+                        continue;
+                    }
+                }
+
+                if let Some(target) = parent_to_folder.get(parent) {
+                    plan.operations.push(Operation {
+                        source: item.path.clone(),
+                        destination: target.join(&item.file_name),
+                        kind: mode.into(),
+                    });
+                    continue;
+                }
+            }
+            if let Some(target) = &fallback {
+                plan.operations.push(Operation {
+                    source: item.path.clone(),
+                    destination: target.join(&item.file_name),
+                    kind: mode.into(),
+                });
+            }
+        }
+
+        for item in &scan.other_files {
             if let Some(parent) = item.path.parent() {
                 if let Some(target) = parent_to_folder.get(parent) {
                     plan.operations.push(Operation {
@@ -203,20 +236,46 @@ fn attach_non_media(
     matched_dirs: &HashSet<PathBuf>,
 ) {
     let mut dir_to_dest = HashMap::<PathBuf, PathBuf>::new();
+    let mut video_key_to_dest = HashMap::<(PathBuf, String), PathBuf>::new();
     for op in &plan.operations {
         if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent()) {
             dir_to_dest
                 .entry(src_parent.to_path_buf())
                 .or_insert_with(|| dst_parent.to_path_buf());
+
+            if let Some(stem) = lower_stem(&op.source) {
+                video_key_to_dest.insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
+            }
         }
     }
 
-    for item in scan
-        .subtitle_files
-        .iter()
-        .chain(scan.audio_files.iter())
-        .chain(scan.other_files.iter())
-    {
+    for item in scan.subtitle_files.iter().chain(scan.audio_files.iter()) {
+        if let Some(parent) = item.path.parent() {
+            let parent_buf = parent.to_path_buf();
+            if matched_dirs.contains(&parent_buf) {
+                if let Some(stem) = lower_stem(&item.path) {
+                    if let Some(dest_parent) = video_key_to_dest.get(&(parent_buf.clone(), stem)) {
+                        plan.operations.push(Operation {
+                            source: item.path.clone(),
+                            destination: dest_parent.join(&item.file_name),
+                            kind: mode.into(),
+                        });
+                        continue;
+                    }
+                }
+
+                if let Some(dest_parent) = dir_to_dest.get(&parent_buf) {
+                    plan.operations.push(Operation {
+                        source: item.path.clone(),
+                        destination: dest_parent.join(&item.file_name),
+                        kind: mode.into(),
+                    });
+                }
+            }
+        }
+    }
+
+    for item in &scan.other_files {
         if let Some(parent) = item.path.parent() {
             let parent_buf = parent.to_path_buf();
             if matched_dirs.contains(&parent_buf) {
@@ -230,6 +289,11 @@ fn attach_non_media(
             }
         }
     }
+}
+
+fn lower_stem(path: &Path) -> Option<String> {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -353,5 +417,83 @@ mod tests {
         assert_eq!(plan.operations.len(), 3);
         let fallback_dest = dest_root.join("Movie (2023)").join("readme.txt");
         assert!(plan.operations.iter().any(|op| op.destination == fallback_dest && op.source == orphan_other));
+    }
+
+    #[test]
+    fn show_plan_pairs_subtitle_to_matching_season_by_stem() {
+        let source_parent = PathBuf::from("/tmp/source/Show.Complete");
+        let s1_video = source_parent.join("Show.S01E01.mkv");
+        let s2_video = source_parent.join("Show.S02E01.mkv");
+        let s2_sub = source_parent.join("Show.S02E01.srt");
+
+        let scan = ScanResult {
+            video_files: vec![
+                scanned(s1_video.clone(), "Show.S01E01.mkv", "Show.Complete", ".mkv"),
+                scanned(s2_video.clone(), "Show.S02E01.mkv", "Show.Complete", ".mkv"),
+            ],
+            subtitle_files: vec![scanned(s2_sub.clone(), "Show.S02E01.srt", "Show.Complete", ".srt")],
+            audio_files: vec![],
+            other_files: vec![],
+        };
+
+        let parsed = vec![
+            parsed(s1_video, "Show.S01E01.mkv", Some("Show"), Some(2022), Some(1), Some(1)),
+            parsed(s2_video, "Show.S02E01.mkv", Some("Show"), Some(2022), Some(2), Some(1)),
+        ];
+
+        let plan = build_show_plan(
+            &scan,
+            &parsed,
+            Path::new("/tmp/dest"),
+            None,
+            None,
+            EffectiveOperationMode::Move,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert!(plan
+            .operations
+            .iter()
+            .any(|op| op.source == s2_sub && op.destination.ends_with("Show (2022)/Season 02/Show.S02E01.srt")));
+    }
+
+    #[test]
+    fn movie_plan_pairs_subtitle_with_matching_movie_by_stem() {
+        let source_parent = PathBuf::from("/tmp/source/mixed");
+        let m1_video = source_parent.join("Movie.One.2021.mkv");
+        let m2_video = source_parent.join("Movie.Two.2022.mkv");
+        let m2_sub = source_parent.join("Movie.Two.2022.srt");
+
+        let scan = ScanResult {
+            video_files: vec![
+                scanned(m1_video.clone(), "Movie.One.2021.mkv", "mixed", ".mkv"),
+                scanned(m2_video.clone(), "Movie.Two.2022.mkv", "mixed", ".mkv"),
+            ],
+            subtitle_files: vec![scanned(m2_sub.clone(), "Movie.Two.2022.srt", "mixed", ".srt")],
+            audio_files: vec![],
+            other_files: vec![],
+        };
+
+        let parsed = vec![
+            parsed(m1_video, "Movie.One.2021.mkv", Some("Movie One"), Some(2021), None, None),
+            parsed(m2_video, "Movie.Two.2022.mkv", Some("Movie Two"), Some(2022), None, None),
+        ];
+
+        let plan = build_movie_plan(
+            &scan,
+            &parsed,
+            Path::new("/tmp/dest"),
+            None,
+            None,
+            EffectiveOperationMode::Move,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert!(plan
+            .operations
+            .iter()
+            .any(|op| op.source == m2_sub && op.destination.ends_with("Movie Two (2022)/Movie.Two.2022.srt")));
     }
 }
