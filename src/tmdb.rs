@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use std::time::Duration;
 
 use crate::config::MediaType;
 
@@ -15,9 +16,15 @@ pub struct TmdbClient {
 
 impl TmdbClient {
     pub fn new(api_key: impl Into<String>) -> Self {
+        let http = Client::builder()
+            .timeout(Duration::from_secs(8))
+            .user_agent("organize/0.1")
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
             api_key: api_key.into(),
-            http: Client::new(),
+            http,
         }
     }
 }
@@ -66,4 +73,21 @@ struct SearchResult {
 
 fn parse_year_from_date(s: String) -> Option<u16> {
     s.get(0..4).and_then(|y| y.parse::<u16>().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_year_from_date;
+
+    #[test]
+    fn parses_valid_iso_date_year() {
+        assert_eq!(parse_year_from_date("2023-05-01".to_string()), Some(2023));
+    }
+
+    #[test]
+    fn returns_none_for_invalid_or_short_date() {
+        assert_eq!(parse_year_from_date("".to_string()), None);
+        assert_eq!(parse_year_from_date("20".to_string()), None);
+        assert_eq!(parse_year_from_date("abcd-01-01".to_string()), None);
+    }
 }

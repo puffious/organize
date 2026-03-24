@@ -224,4 +224,76 @@ mod tests {
         assert!(result.failures.is_empty());
         assert_eq!(fs::read_to_string(dst).expect("read destination"), "fresh");
     }
+
+    #[test]
+    fn hardlink_operation_creates_linked_file() {
+        let dir = tempdir().expect("create tempdir");
+        let src = dir.path().join("src/e.txt");
+        let dst = dir.path().join("dst/e.txt");
+        write_file(&src, "echo");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: src,
+                destination: dst.clone(),
+                kind: OperationKind::HardLink,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, false).expect("execute plan");
+        assert_eq!(result.succeeded, 1);
+        assert!(result.failures.is_empty());
+        assert_eq!(fs::read_to_string(dst).expect("read destination"), "echo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_operation_creates_symlinked_file() {
+        let dir = tempdir().expect("create tempdir");
+        let src = dir.path().join("src/f.txt");
+        let dst = dir.path().join("dst/f.txt");
+        write_file(&src, "foxtrot");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: src.clone(),
+                destination: dst.clone(),
+                kind: OperationKind::SymLink,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, false).expect("execute plan");
+        assert_eq!(result.succeeded, 1);
+        assert!(result.failures.is_empty());
+        let meta = fs::symlink_metadata(&dst).expect("symlink metadata");
+        assert!(meta.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(dst).expect("read destination"), "foxtrot");
+    }
+
+    #[test]
+    fn failed_operation_collects_failure_detail() {
+        let dir = tempdir().expect("create tempdir");
+        let missing_src = dir.path().join("src/missing.txt");
+        let dst = dir.path().join("dst/missing.txt");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: missing_src,
+                destination: dst,
+                kind: OperationKind::Copy,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, false).expect("execute plan should return aggregated result");
+        assert_eq!(result.failed, 1);
+        assert_eq!(result.succeeded, 0);
+        assert_eq!(result.failures.len(), 1);
+        assert!(result.failures[0].contains("failed"));
+    }
 }

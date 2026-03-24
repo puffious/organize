@@ -212,29 +212,43 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
     println!("Scanning: {}", args.source.display());
     println!();
 
-    let mut parsed_ok = 0usize;
-    let mut parsed_failed = 0usize;
+    let mut parsed = Vec::with_capacity(scan.video_files.len());
 
     for file in &scan.video_files {
-        let parsed = match hint {
+        let parsed_item = match hint {
             Some(ScanType::Show) => parse_show(&file.file_name),
             Some(ScanType::Movie) => parse_movie(&file.file_name),
             None => auto_parse(&file.file_name),
         };
 
-        print_scan_item(file, &parsed);
-
-        if parsed.title.is_some() {
-            parsed_ok += 1;
-        } else {
-            parsed_failed += 1;
-        }
+        print_scan_item(file, &parsed_item);
+        parsed.push(parsed_item);
     }
+
+    let summary = summarize_scan(&parsed);
 
     let total = scan.video_files.len();
     println!(
+        "Media Summary: video={}, subtitle={}, audio={}, other={}",
+        scan.video_files.len(),
+        scan.subtitle_files.len(),
+        scan.audio_files.len(),
+        scan.other_files.len()
+    );
+    println!(
         "Summary: {} files scanned, {} parsed successfully, {} failed",
-        total, parsed_ok, parsed_failed
+        total, summary.parsed_ok, summary.parsed_failed
+    );
+    println!(
+        "Parse Coverage: title={}/{}, year={}/{}, season={}/{}, episode={}/{}",
+        summary.parsed_ok,
+        total,
+        summary.with_year,
+        total,
+        summary.with_season,
+        total,
+        summary.with_episode,
+        total
     );
 
     Ok(())
@@ -249,6 +263,8 @@ fn auto_parse(input: &str) -> MediaInfo {
 }
 
 fn print_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) {
+    let confidence = parse_confidence(info);
+    let kind = detected_kind(info);
     println!("  {}", file.file_name);
     println!(
         "    Title:   {}",
@@ -273,7 +289,73 @@ fn print_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) {
             .unwrap_or_else(|| "(not found)".to_string())
     );
     println!("    Type:    video");
+    println!("    Kind:    {}", kind);
+    println!("    Parse:   {}", confidence);
     println!();
+}
+
+#[derive(Debug, Default)]
+struct ScanSummary {
+    parsed_ok: usize,
+    parsed_failed: usize,
+    with_year: usize,
+    with_season: usize,
+    with_episode: usize,
+}
+
+fn summarize_scan(items: &[MediaInfo]) -> ScanSummary {
+    let mut out = ScanSummary::default();
+    for info in items {
+        if info.title.is_some() {
+            out.parsed_ok += 1;
+        } else {
+            out.parsed_failed += 1;
+        }
+        if info.year.is_some() {
+            out.with_year += 1;
+        }
+        if info.season.is_some() {
+            out.with_season += 1;
+        }
+        if info.episode.is_some() {
+            out.with_episode += 1;
+        }
+    }
+    out
+}
+
+fn parse_confidence(info: &MediaInfo) -> &'static str {
+    let mut score = 0u8;
+    if info.title.is_some() {
+        score += 2;
+    }
+    if info.year.is_some() {
+        score += 1;
+    }
+    if info.season.is_some() {
+        score += 1;
+    }
+    if info.episode.is_some() {
+        score += 1;
+    }
+
+    if score >= 4 {
+        "high"
+    } else if score >= 2 {
+        "medium"
+    } else {
+        "low"
+    }
+}
+
+fn detected_kind(info: &MediaInfo) -> &'static str {
+    if info.season.is_some() || info.episode.is_some() {
+        "show"
+    } else if info.title.is_some() {
+        "movie"
+    } else {
+        "unknown"
+    }
 }
 
 fn present_plan(
@@ -391,7 +473,13 @@ fn resolve_year(
         }
     }
 
-    lookup.lookup_year(title, media_type)
+    match lookup.lookup_year(title, media_type) {
+        Ok(year) => Ok(year),
+        Err(err) => {
+            warn!("TMDB lookup failed for '{}': {}", title, err);
+            Ok(None)
+        }
+    }
 }
 
 fn resolve_season_episode_if_missing(info: &mut MediaInfo, yes_mode: bool) -> Result<()> {
@@ -423,9 +511,22 @@ fn is_extras_folder(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{preflight_conflicts, resolve_conflict_policy, truncate_middle, ConflictPolicy};
+    use super::{
+        detected_kind, parse_confidence, preflight_conflicts, resolve_conflict_policy, summarize_scan,
+        truncate_middle, ConflictPolicy,
+    };
     use crate::config::{AppConfig, ConflictMode};
+    use crate::parser::MediaInfo;
     use crate::planner::Plan;
+    use crate::tmdb::MetadataLookup;
+
+    struct FailingLookup;
+
+    impl MetadataLookup for FailingLookup {
+        fn lookup_year(&self, _title: &str, _media_type: crate::config::MediaType) -> anyhow::Result<Option<u16>> {
+            anyhow::bail!("network unavailable")
+        }
+    }
 
     fn args(overwrite: bool, on_conflict: Option<crate::cli::ConflictArg>) -> crate::cli::ShowMovieArgs {
         crate::cli::ShowMovieArgs {
@@ -507,5 +608,84 @@ mod tests {
         assert!(preflight_conflicts(&plan, ConflictPolicy::Abort).is_err());
         assert!(preflight_conflicts(&plan, ConflictPolicy::Skip).is_ok());
         assert!(preflight_conflicts(&plan, ConflictPolicy::Overwrite).is_ok());
+    }
+
+    #[test]
+    fn summarize_scan_counts_parse_coverage() {
+        let items = vec![
+            MediaInfo {
+                title: Some("A".to_string()),
+                year: Some(2020),
+                season: Some(1),
+                episode: Some(1),
+                ..Default::default()
+            },
+            MediaInfo {
+                title: Some("B".to_string()),
+                year: None,
+                season: Some(2),
+                episode: None,
+                ..Default::default()
+            },
+            MediaInfo::default(),
+        ];
+
+        let summary = summarize_scan(&items);
+        assert_eq!(summary.parsed_ok, 2);
+        assert_eq!(summary.parsed_failed, 1);
+        assert_eq!(summary.with_year, 1);
+        assert_eq!(summary.with_season, 2);
+        assert_eq!(summary.with_episode, 1);
+    }
+
+    #[test]
+    fn parse_confidence_classifies_expected_levels() {
+        let high = MediaInfo {
+            title: Some("Show".to_string()),
+            year: Some(2020),
+            season: Some(1),
+            episode: Some(2),
+            ..Default::default()
+        };
+        let medium = MediaInfo {
+            title: Some("Movie".to_string()),
+            ..Default::default()
+        };
+        let low = MediaInfo::default();
+
+        assert_eq!(parse_confidence(&high), "high");
+        assert_eq!(parse_confidence(&medium), "medium");
+        assert_eq!(parse_confidence(&low), "low");
+    }
+
+    #[test]
+    fn detected_kind_prefers_show_when_episode_or_season_present() {
+        let show_info = MediaInfo {
+            title: Some("The Show".to_string()),
+            season: Some(1),
+            ..Default::default()
+        };
+        let movie_info = MediaInfo {
+            title: Some("The Movie".to_string()),
+            ..Default::default()
+        };
+        let unknown = MediaInfo::default();
+
+        assert_eq!(detected_kind(&show_info), "show");
+        assert_eq!(detected_kind(&movie_info), "movie");
+        assert_eq!(detected_kind(&unknown), "unknown");
+    }
+
+    #[test]
+    fn resolve_year_returns_none_on_lookup_failure() {
+        let lookup = FailingLookup;
+        let year = super::resolve_year(
+            Some("Some Title"),
+            crate::config::MediaType::Movie,
+            true,
+            &lookup,
+        )
+        .expect("resolve_year should not fail when lookup errors");
+        assert_eq!(year, None);
     }
 }

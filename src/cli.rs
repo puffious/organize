@@ -36,13 +36,13 @@ pub struct ShowMovieArgs {
     pub source: PathBuf,
     pub destination: PathBuf,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["link", "symlink"])]
     pub copy: bool,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["copy", "symlink"])]
     pub link: bool,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["copy", "link"])]
     pub symlink: bool,
 
     #[arg(long)]
