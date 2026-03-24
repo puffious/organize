@@ -39,10 +39,23 @@ pub struct UnparseableItem {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    ExistingFile,
+    ExistingDirectory,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConflictItem {
+    pub path: PathBuf,
+    pub kind: ConflictKind,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Plan {
     pub operations: Vec<Operation>,
     pub conflicts: Vec<PathBuf>,
+    pub conflict_details: Vec<ConflictItem>,
     pub unparseable: Vec<UnparseableItem>,
 }
 
@@ -88,9 +101,7 @@ pub fn build_show_plan(
             .join(season_folder)
             .join(file_name);
 
-        if dest.exists() {
-            plan.conflicts.push(dest.clone());
-        }
+        record_conflict(&mut plan, &dest);
 
         if let Some(parent) = src.parent() {
             matched_dirs.insert(parent.to_path_buf());
@@ -151,9 +162,7 @@ pub fn build_movie_plan(
         }
         let dest = target_folder.join(&info.original_filename);
 
-        if dest.exists() {
-            plan.conflicts.push(dest.clone());
-        }
+        record_conflict(&mut plan, &dest);
 
         if let Some(parent) = src.parent() {
             parent_to_folder
@@ -296,12 +305,31 @@ fn lower_stem(path: &Path) -> Option<String> {
         .map(|s| s.to_string_lossy().to_ascii_lowercase())
 }
 
+fn record_conflict(plan: &mut Plan, destination: &Path) {
+    if !destination.exists() {
+        return;
+    }
+
+    let kind = if destination.is_dir() {
+        ConflictKind::ExistingDirectory
+    } else {
+        ConflictKind::ExistingFile
+    };
+
+    plan.conflicts.push(destination.to_path_buf());
+    plan.conflict_details.push(ConflictItem {
+        path: destination.to_path_buf(),
+        kind,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::EffectiveOperationMode;
     use crate::parser::MediaInfo;
     use crate::scanner::{ScanResult, ScannedFile};
+    use tempfile::tempdir;
 
     fn scanned(path: PathBuf, file_name: &str, parent_name: &str, extension: &str) -> ScannedFile {
         ScannedFile {
@@ -495,5 +523,53 @@ mod tests {
             .operations
             .iter()
             .any(|op| op.source == m2_sub && op.destination.ends_with("Movie Two (2022)/Movie.Two.2022.srt")));
+    }
+
+    #[test]
+    fn show_plan_records_existing_file_conflict_kind() {
+        let dir = tempdir().expect("create tempdir");
+        let source_parent = dir.path().join("source");
+        std::fs::create_dir_all(&source_parent).expect("create source dir");
+        let video_path = source_parent.join("Show.S01E01.mkv");
+        std::fs::write(&video_path, b"video").expect("write source video");
+
+        let dest_root = dir.path().join("dest");
+        let conflict_path = dest_root
+            .join("Show (2022)")
+            .join("Season 01")
+            .join("Show.S01E01.mkv");
+        std::fs::create_dir_all(conflict_path.parent().expect("conflict parent")).expect("create conflict parent");
+        std::fs::write(&conflict_path, b"existing").expect("write conflict file");
+
+        let scan = ScanResult {
+            video_files: vec![scanned(video_path.clone(), "Show.S01E01.mkv", "source", ".mkv")],
+            subtitle_files: vec![],
+            audio_files: vec![],
+            other_files: vec![],
+        };
+
+        let parsed = vec![parsed(
+            video_path,
+            "Show.S01E01.mkv",
+            Some("Show"),
+            Some(2022),
+            Some(1),
+            Some(1),
+        )];
+
+        let plan = build_show_plan(
+            &scan,
+            &parsed,
+            &dest_root,
+            None,
+            None,
+            EffectiveOperationMode::Move,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.conflicts.len(), 1);
+        assert_eq!(plan.conflict_details.len(), 1);
+        assert_eq!(plan.conflict_details[0].kind, ConflictKind::ExistingFile);
     }
 }

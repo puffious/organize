@@ -13,10 +13,11 @@ use clap::Parser;
 use cli::{Cli, Commands, ScanType};
 use config::{AppConfig, ConflictMode, EffectiveOperationMode, MediaType, NonMediaMode};
 use parser::{parse_movie, parse_show, MediaInfo};
-use planner::{build_movie_plan, build_show_plan, Plan};
+use planner::{build_movie_plan, build_show_plan, ConflictKind, Plan};
 use scanner::scan_source;
 use serde::Serialize;
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
 use tmdb::MetadataLookup;
 use tracing::{info, warn};
@@ -256,7 +257,8 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
             items: json_items,
         };
 
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let payload = serde_json::to_string_pretty(&report)?;
+        write_or_print_output(&payload, args.output.as_deref())?;
         return Ok(());
     }
 
@@ -283,6 +285,19 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
         total
     );
 
+    Ok(())
+}
+
+fn write_or_print_output(content: &str, output: Option<&Path>) -> Result<()> {
+    if let Some(path) = output {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
+        println!("Wrote report to {}", path.display());
+    } else {
+        println!("{}", content);
+    }
     Ok(())
 }
 
@@ -473,8 +488,31 @@ fn present_plan(
     if !plan.conflicts.is_empty() {
         println!();
         warn!("{} conflicts detected", plan.conflicts.len());
-        for path in &plan.conflicts {
-            println!("CONFLICT: {}", path.display());
+
+        if !plan.conflict_details.is_empty() {
+            let files = plan
+                .conflict_details
+                .iter()
+                .filter(|c| c.kind == ConflictKind::ExistingFile)
+                .count();
+            let dirs = plan
+                .conflict_details
+                .iter()
+                .filter(|c| c.kind == ConflictKind::ExistingDirectory)
+                .count();
+            println!("Conflict Types: existing-file={}, existing-directory={}", files, dirs);
+
+            for detail in &plan.conflict_details {
+                let kind = match detail.kind {
+                    ConflictKind::ExistingFile => "existing-file",
+                    ConflictKind::ExistingDirectory => "existing-directory",
+                };
+                println!("CONFLICT [{}]: {}", kind, detail.path.display());
+            }
+        } else {
+            for path in &plan.conflicts {
+                println!("CONFLICT: {}", path.display());
+            }
         }
     }
 
@@ -602,6 +640,7 @@ mod tests {
     use crate::parser::MediaInfo;
     use crate::planner::Plan;
     use crate::tmdb::MetadataLookup;
+    use tempfile::tempdir;
 
     struct FailingLookup;
 
@@ -792,5 +831,17 @@ mod tests {
         assert_eq!(json_item.media_type, "video");
         assert_eq!(json_item.detected_kind, "show");
         assert_eq!(json_item.parse_confidence, "high");
+    }
+
+    #[test]
+    fn write_or_print_output_writes_file_when_path_provided() {
+        let dir = tempdir().expect("create tempdir");
+        let path = dir.path().join("reports/scan.json");
+
+        super::write_or_print_output("{\"ok\":true}", Some(path.as_path()))
+            .expect("write output file");
+
+        let written = std::fs::read_to_string(path).expect("read written file");
+        assert_eq!(written, "{\"ok\":true}");
     }
 }

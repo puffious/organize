@@ -141,6 +141,7 @@ mod tests {
                 kind: OperationKind::Copy,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 
@@ -165,6 +166,7 @@ mod tests {
                 kind: OperationKind::Move,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 
@@ -190,6 +192,7 @@ mod tests {
                 kind: OperationKind::Copy,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 
@@ -216,6 +219,7 @@ mod tests {
                 kind: OperationKind::Copy,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 
@@ -239,6 +243,7 @@ mod tests {
                 kind: OperationKind::HardLink,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 
@@ -263,6 +268,7 @@ mod tests {
                 kind: OperationKind::SymLink,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 
@@ -287,6 +293,7 @@ mod tests {
                 kind: OperationKind::Copy,
             }],
             conflicts: vec![],
+            conflict_details: vec![],
             unparseable: vec![],
         };
 

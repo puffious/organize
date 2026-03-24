@@ -79,6 +79,14 @@ pub struct ScanArgs {
 
     #[arg(long, default_value_t = false, help = "Output structured JSON report")]
     pub json: bool,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        requires = "json",
+        help = "Write JSON report to a file (requires --json)"
+    )]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
