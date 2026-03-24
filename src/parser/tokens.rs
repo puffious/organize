@@ -24,7 +24,7 @@ pub fn extract_extension(name: &str) -> String {
 
 pub fn title_boundary_index(normalized: &str) -> usize {
     let boundary_patterns = [
-        Regex::new(r"(?i)\bS\d{1,2}E\d{1,3}\b").expect("valid regex"),
+        Regex::new(r"(?i)\bS\d{1,2}E\d{1,3}(?:E\d{1,3})*(?:-E\d{1,3})?\b").expect("valid regex"),
         Regex::new(r"(?i)\bS\d{1,2}\b").expect("valid regex"),
         Regex::new(r"(?i)\bSeason\s*\d{1,2}\b").expect("valid regex"),
         Regex::new(r"\((19\d{2}|20\d{2})\)").expect("valid regex"),

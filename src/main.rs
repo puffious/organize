@@ -8,7 +8,7 @@ mod prompt;
 mod scanner;
 mod tmdb;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, ScanType};
 use config::{AppConfig, EffectiveOperationMode, MediaType, NonMediaMode};
@@ -24,61 +24,61 @@ fn main() -> Result<()> {
     logging::init_logging(cli.verbose, config.general.log_file.as_deref())?;
 
     match &cli.command {
-        Commands::Show(args) => run_show(args, &config, cli.yes),
-        Commands::Movie(args) => run_movie(args, &config, cli.yes),
+        Commands::Show(args) => run_show(args, &config, cli.yes, cli.dry_run),
+        Commands::Movie(args) => run_movie(args, &config, cli.yes, cli.dry_run),
         Commands::Scan(args) => run_scan(args, &config),
     }
 }
 
-fn run_show(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Result<()> {
+fn run_show(
+    args: &cli::ShowMovieArgs,
+    config: &AppConfig,
+    cli_yes: bool,
+    cli_dry_run: bool,
+) -> Result<()> {
     let scan = scan_source(&args.source, &config.media_extensions)?;
-    let non_media_mode = args
-        .non_media
-        .unwrap_or(config.non_media.mode)
-        .to_scanner_mode();
+    let non_media_mode = match args.non_media {
+        Some(cli::NonMediaArg::Keep) => NonMediaMode::Keep,
+        Some(cli::NonMediaArg::Ignore) => NonMediaMode::Ignore,
+        None => config.non_media.mode,
+    }
+    .to_scanner_mode();
     let mode = EffectiveOperationMode::from_args_and_config(args, config);
     let yes_mode = cli_yes || args.yes || config.general.auto_confirm;
+    let dry_run = cli_dry_run || args.dry_run;
     let tmdb_client = tmdb::TmdbClient::new(config.tmdb.api_key.clone());
 
-    let parsed = scan
-        .video_files
-        .iter()
-        .map(|f| {
-            let mut parsed = parse_show(&f.file_name);
-            parsed.original_filename = f.file_name.clone();
-            parsed.extension = f.extension.clone();
-            parsed.full_path = Some(f.path.clone());
+    let mut parsed = Vec::with_capacity(scan.video_files.len());
+    for f in &scan.video_files {
+        let mut item = parse_show(&f.file_name);
+        item.original_filename = f.file_name.clone();
+        item.extension = f.extension.clone();
+        item.full_path = Some(f.path.clone());
 
-            if parsed.title.is_none() {
-                parsed.title = parse_show(&f.parent_name).title;
-            }
+        if item.title.is_none() {
+            item.title = parse_show(&f.parent_name).title;
+        }
 
-            if parsed.year.is_none() {
-                parsed.year = parser::extract_year_from_input(&f.parent_name);
-            }
-            if parsed.season.is_none() {
-                parsed.season = parser::extract_season_from_input(&f.parent_name);
-            }
-            if parsed.season.is_none() && is_extras_folder(&f.parent_name) {
-                parsed.season = Some(0);
-            }
+        if item.year.is_none() {
+            item.year = parser::extract_year_from_input(&f.parent_name);
+        }
+        if item.season.is_none() {
+            item.season = parser::extract_season_from_input(&f.parent_name);
+        }
+        if item.season.is_none() && is_extras_folder(&f.parent_name) {
+            item.season = Some(0);
+        }
 
-            if parsed.year.is_none() {
-                parsed.year = resolve_year(
-                    parsed.title.as_deref(),
-                    MediaType::Show,
-                    yes_mode,
-                    &tmdb_client,
-                )?;
-            }
+        if item.year.is_none() {
+            item.year = resolve_year(item.title.as_deref(), MediaType::Show, yes_mode, &tmdb_client)?;
+        }
 
-            if parsed.season.is_none() || parsed.episode.is_none() {
-                resolve_season_episode_if_missing(&mut parsed, yes_mode)?;
-            }
+        if item.season.is_none() || item.episode.is_none() {
+            resolve_season_episode_if_missing(&mut item, yes_mode)?;
+        }
 
-            parsed
-        })
-        .collect::<Vec<_>>();
+        parsed.push(item);
+    }
 
     let plan = build_show_plan(
         &scan,
@@ -90,9 +90,9 @@ fn run_show(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Res
         non_media_mode,
     )?;
 
-    present_plan(&plan, true, args.dry_run || cli_dry_run(config))?;
+    present_plan(&plan, true, dry_run)?;
 
-    if args.dry_run || cli_dry_run(config) {
+    if dry_run {
         return Ok(());
     }
 
@@ -110,41 +110,41 @@ fn run_show(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Res
     result.into_exit_result()
 }
 
-fn run_movie(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Result<()> {
+fn run_movie(
+    args: &cli::ShowMovieArgs,
+    config: &AppConfig,
+    cli_yes: bool,
+    cli_dry_run: bool,
+) -> Result<()> {
     let scan = scan_source(&args.source, &config.media_extensions)?;
-    let non_media_mode = args
-        .non_media
-        .unwrap_or(config.non_media.mode)
-        .to_scanner_mode();
+    let non_media_mode = match args.non_media {
+        Some(cli::NonMediaArg::Keep) => NonMediaMode::Keep,
+        Some(cli::NonMediaArg::Ignore) => NonMediaMode::Ignore,
+        None => config.non_media.mode,
+    }
+    .to_scanner_mode();
     let mode = EffectiveOperationMode::from_args_and_config(args, config);
     let yes_mode = cli_yes || args.yes || config.general.auto_confirm;
+    let dry_run = cli_dry_run || args.dry_run;
     let tmdb_client = tmdb::TmdbClient::new(config.tmdb.api_key.clone());
 
-    let parsed = scan
-        .video_files
-        .iter()
-        .map(|f| {
-            let mut parsed = parse_movie(&f.file_name);
-            parsed.original_filename = f.file_name.clone();
-            parsed.extension = f.extension.clone();
-            parsed.full_path = Some(f.path.clone());
-            if parsed.title.is_none() {
-                parsed.title = parse_movie(&f.parent_name).title;
-            }
-            if parsed.year.is_none() {
-                parsed.year = parser::extract_year_from_input(&f.parent_name);
-            }
-            if parsed.year.is_none() {
-                parsed.year = resolve_year(
-                    parsed.title.as_deref(),
-                    MediaType::Movie,
-                    yes_mode,
-                    &tmdb_client,
-                )?;
-            }
-            parsed
-        })
-        .collect::<Vec<_>>();
+    let mut parsed = Vec::with_capacity(scan.video_files.len());
+    for f in &scan.video_files {
+        let mut item = parse_movie(&f.file_name);
+        item.original_filename = f.file_name.clone();
+        item.extension = f.extension.clone();
+        item.full_path = Some(f.path.clone());
+        if item.title.is_none() {
+            item.title = parse_movie(&f.parent_name).title;
+        }
+        if item.year.is_none() {
+            item.year = parser::extract_year_from_input(&f.parent_name);
+        }
+        if item.year.is_none() {
+            item.year = resolve_year(item.title.as_deref(), MediaType::Movie, yes_mode, &tmdb_client)?;
+        }
+        parsed.push(item);
+    }
 
     let plan = build_movie_plan(
         &scan,
@@ -156,9 +156,9 @@ fn run_movie(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Re
         non_media_mode,
     )?;
 
-    present_plan(&plan, false, args.dry_run || cli_dry_run(config))?;
+    present_plan(&plan, false, dry_run)?;
 
-    if args.dry_run || cli_dry_run(config) {
+    if dry_run {
         return Ok(());
     }
 
@@ -284,10 +284,6 @@ fn present_plan(plan: &Plan, is_show: bool, dry_run: bool) -> Result<()> {
     );
 
     Ok(())
-}
-
-fn cli_dry_run(_config: &AppConfig) -> bool {
-    false
 }
 
 fn resolve_year(

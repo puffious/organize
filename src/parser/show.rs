@@ -60,7 +60,7 @@ fn extract_season_episode(normalized: &str) -> (Option<u16>, Option<u16>) {
         return (s, e);
     }
 
-    let season_only = Regex::new(r"(?i)\bS(\d{1,2})(?!E)\b").expect("valid regex");
+    let season_only = Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex");
     if let Some(c) = season_only.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, None);

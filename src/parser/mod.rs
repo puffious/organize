@@ -38,7 +38,7 @@ pub fn extract_year_from_input(input: &str) -> Option<u16> {
 
 pub fn extract_season_from_input(input: &str) -> Option<u16> {
     let patterns = [
-        Regex::new(r"(?i)S(\d{1,2})(?!E)").expect("valid regex"),
+        Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"),
         Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"),
     ];
     for pattern in patterns {
