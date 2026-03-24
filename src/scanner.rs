@@ -101,3 +101,54 @@ fn lower_ext(path: &Path) -> String {
         .map(|e| format!(".{}", e.to_string_lossy().to_ascii_lowercase()))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::MediaExtensions;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn write_file(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent dirs");
+        }
+        fs::write(path, b"test").expect("write test file");
+    }
+
+    #[test]
+    fn scan_source_classifies_files_by_extension() {
+        let dir = tempdir().expect("create tempdir");
+        let root = dir.path();
+
+        write_file(&root.join("show/episode01.MKV"));
+        write_file(&root.join("show/episode01.srt"));
+        write_file(&root.join("show/episode01.FLAC"));
+        write_file(&root.join("show/poster.jpg"));
+
+        let exts = MediaExtensions::default();
+        let result = scan_source(root, &exts).expect("scan source");
+
+        assert_eq!(result.video_files.len(), 1);
+        assert_eq!(result.subtitle_files.len(), 1);
+        assert_eq!(result.audio_files.len(), 1);
+        assert_eq!(result.other_files.len(), 1);
+    }
+
+    #[test]
+    fn clean_empty_dirs_removes_empty_only() {
+        let dir = tempdir().expect("create tempdir");
+        let root = dir.path();
+        let keep_dir = root.join("keep");
+        let remove_dir = root.join("remove/nested");
+
+        fs::create_dir_all(&keep_dir).expect("create keep dir");
+        fs::create_dir_all(&remove_dir).expect("create remove dir");
+        fs::write(keep_dir.join("data.txt"), b"x").expect("write keep file");
+
+        clean_empty_dirs(root).expect("clean empty dirs");
+
+        assert!(keep_dir.exists());
+        assert!(!remove_dir.exists());
+    }
+}
