@@ -105,6 +105,16 @@ cargo fmt
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
+### CI
+
+This repository includes GitHub Actions CI in .github/workflows/ci.yml with:
+
+- rustfmt check
+- clippy with warnings denied
+- full test suite (unit + integration)
+
+CI runs on pushes to main and on pull requests.
+
 ### Project Layout
 
 ```text
