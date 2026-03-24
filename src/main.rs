@@ -10,7 +10,7 @@ mod tmdb;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands, ScanType};
+use cli::{Cli, Commands, ConfidenceArg, ScanType};
 use config::{AppConfig, ConflictMode, EffectiveOperationMode, MediaType, NonMediaMode};
 use parser::{parse_movie, parse_show, MediaInfo};
 use planner::{build_movie_plan, build_show_plan, ConflictKind, Plan};
@@ -218,6 +218,7 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
 
     let mut parsed = Vec::with_capacity(scan.video_files.len());
     let mut json_items = Vec::with_capacity(scan.video_files.len());
+    let min_confidence = args.min_confidence.map(confidence_arg_to_rank).unwrap_or(0);
 
     for file in &scan.video_files {
         let parsed_item = match hint {
@@ -226,17 +227,30 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
             None => auto_parse(&file.file_name),
         };
 
-        if args.json {
-            json_items.push(to_json_scan_item(file, &parsed_item));
-        } else {
-            print_scan_item(file, &parsed_item);
+        let include = should_include_scan_item(&parsed_item, args.only_failed, min_confidence);
+
+        if include {
+            if args.json {
+                json_items.push(to_json_scan_item(file, &parsed_item));
+            } else {
+                print_scan_item(file, &parsed_item);
+            }
         }
         parsed.push(parsed_item);
     }
 
     let summary = summarize_scan(&parsed);
+    let emitted_summary = summarize_scan_items_json(&json_items, args.json);
 
     let total = scan.video_files.len();
+    let emitted_total = if args.json {
+        json_items.len()
+    } else {
+        parsed
+            .iter()
+            .filter(|info| should_include_scan_item(info, args.only_failed, min_confidence))
+            .count()
+    };
     if args.json {
         let report = ScanJsonReport {
             source: args.source.display().to_string(),
@@ -247,12 +261,13 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
                 other: scan.other_files.len(),
             },
             parse_summary: ParseSummary {
-                total,
-                parsed_ok: summary.parsed_ok,
-                parsed_failed: summary.parsed_failed,
-                with_year: summary.with_year,
-                with_season: summary.with_season,
-                with_episode: summary.with_episode,
+                total_scanned: total,
+                total_emitted: emitted_total,
+                parsed_ok: emitted_summary.parsed_ok,
+                parsed_failed: emitted_summary.parsed_failed,
+                with_year: emitted_summary.with_year,
+                with_season: emitted_summary.with_season,
+                with_episode: emitted_summary.with_episode,
             },
             items: json_items,
         };
@@ -270,8 +285,8 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
         scan.other_files.len()
     );
     println!(
-        "Summary: {} files scanned, {} parsed successfully, {} failed",
-        total, summary.parsed_ok, summary.parsed_failed
+        "Summary: {} files scanned, {} emitted, {} parsed successfully, {} failed",
+        total, emitted_total, summary.parsed_ok, summary.parsed_failed
     );
     println!(
         "Parse Coverage: title={}/{}, year={}/{}, season={}/{}, episode={}/{}",
@@ -284,6 +299,15 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
         summary.with_episode,
         total
     );
+    if args.only_failed || args.min_confidence.is_some() {
+        println!(
+            "Filters: only_failed={}, min_confidence={}",
+            args.only_failed,
+            args.min_confidence
+                .map(|v| format!("{:?}", v).to_ascii_lowercase())
+                .unwrap_or_else(|| "none".to_string())
+        );
+    }
 
     Ok(())
 }
@@ -381,7 +405,8 @@ struct MediaSummary {
 
 #[derive(Debug, Serialize)]
 struct ParseSummary {
-    total: usize,
+    total_scanned: usize,
+    total_emitted: usize,
     parsed_ok: usize,
     parsed_failed: usize,
     with_year: usize,
@@ -420,6 +445,54 @@ fn summarize_scan(items: &[MediaInfo]) -> ScanSummary {
         }
     }
     out
+}
+
+fn summarize_scan_items_json(items: &[ScanItemJson], enabled: bool) -> ScanSummary {
+    if !enabled {
+        return ScanSummary::default();
+    }
+    let mut out = ScanSummary::default();
+    for info in items {
+        if info.title.is_some() {
+            out.parsed_ok += 1;
+        } else {
+            out.parsed_failed += 1;
+        }
+        if info.year.is_some() {
+            out.with_year += 1;
+        }
+        if info.season.is_some() {
+            out.with_season += 1;
+        }
+        if info.episode.is_some() {
+            out.with_episode += 1;
+        }
+    }
+    out
+}
+
+fn should_include_scan_item(info: &MediaInfo, only_failed: bool, min_confidence_rank: u8) -> bool {
+    if only_failed && info.title.is_some() {
+        return false;
+    }
+    confidence_rank(parse_confidence(info)) >= min_confidence_rank
+}
+
+fn confidence_arg_to_rank(value: ConfidenceArg) -> u8 {
+    match value {
+        ConfidenceArg::Low => 1,
+        ConfidenceArg::Medium => 2,
+        ConfidenceArg::High => 3,
+    }
+}
+
+fn confidence_rank(value: &str) -> u8 {
+    match value {
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
 }
 
 fn parse_confidence(info: &MediaInfo) -> &'static str {
@@ -633,7 +706,8 @@ fn is_extras_folder(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        detected_kind, parse_confidence, preflight_conflicts, resolve_conflict_policy, summarize_scan,
+        confidence_arg_to_rank, confidence_rank, detected_kind, parse_confidence,
+        preflight_conflicts, resolve_conflict_policy, should_include_scan_item, summarize_scan,
         to_json_scan_item, truncate_middle, ConflictPolicy,
     };
     use crate::config::{AppConfig, ConflictMode};
@@ -831,6 +905,38 @@ mod tests {
         assert_eq!(json_item.media_type, "video");
         assert_eq!(json_item.detected_kind, "show");
         assert_eq!(json_item.parse_confidence, "high");
+    }
+
+    #[test]
+    fn confidence_rank_orders_levels() {
+        assert!(confidence_rank("high") > confidence_rank("medium"));
+        assert!(confidence_rank("medium") > confidence_rank("low"));
+        assert_eq!(confidence_rank("unknown"), 0);
+    }
+
+    #[test]
+    fn confidence_arg_to_rank_matches_strings() {
+        assert_eq!(confidence_arg_to_rank(crate::cli::ConfidenceArg::Low), 1);
+        assert_eq!(confidence_arg_to_rank(crate::cli::ConfidenceArg::Medium), 2);
+        assert_eq!(confidence_arg_to_rank(crate::cli::ConfidenceArg::High), 3);
+    }
+
+    #[test]
+    fn should_include_scan_item_applies_filters() {
+        let ok = MediaInfo {
+            title: Some("Show".to_string()),
+            year: Some(2020),
+            season: Some(1),
+            episode: Some(1),
+            ..Default::default()
+        };
+        let failed = MediaInfo::default();
+
+        assert!(should_include_scan_item(&ok, false, 1));
+        assert!(should_include_scan_item(&ok, false, 3));
+        assert!(!should_include_scan_item(&ok, true, 1));
+        assert!(should_include_scan_item(&failed, true, 1));
+        assert!(!should_include_scan_item(&failed, false, 2));
     }
 
     #[test]

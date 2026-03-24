@@ -55,6 +55,8 @@ Example:
 ```bash
 cargo run -- scan ./downloads/My.Show.Complete --json
 cargo run -- scan ./downloads/My.Show.Complete --json --output ./reports/scan.json
+cargo run -- scan ./downloads/My.Show.Complete --only-failed
+cargo run -- scan ./downloads/My.Show.Complete --min-confidence medium
 ```
 
 ## Conflict Handling

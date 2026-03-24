@@ -80,6 +80,12 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = false, help = "Output structured JSON report")]
     pub json: bool,
 
+    #[arg(long, default_value_t = false, help = "Only show items where title parsing failed")]
+    pub only_failed: bool,
+
+    #[arg(long, value_enum, help = "Only include items at or above this parse confidence")]
+    pub min_confidence: Option<ConfidenceArg>,
+
     #[arg(
         long,
         value_name = "PATH",
@@ -93,6 +99,13 @@ pub struct ScanArgs {
 pub enum ScanType {
     Show,
     Movie,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConfidenceArg {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
