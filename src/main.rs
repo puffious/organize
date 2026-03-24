@@ -15,6 +15,7 @@ use config::{AppConfig, ConflictMode, EffectiveOperationMode, MediaType, NonMedi
 use parser::{parse_movie, parse_show, MediaInfo};
 use planner::{build_movie_plan, build_show_plan, Plan};
 use scanner::scan_source;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use tmdb::MetadataLookup;
@@ -209,10 +210,13 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
     let scan = scan_source(&args.source, &config.media_extensions)?;
     let hint = args.r#type;
 
-    println!("Scanning: {}", args.source.display());
-    println!();
+    if !args.json {
+        println!("Scanning: {}", args.source.display());
+        println!();
+    }
 
     let mut parsed = Vec::with_capacity(scan.video_files.len());
+    let mut json_items = Vec::with_capacity(scan.video_files.len());
 
     for file in &scan.video_files {
         let parsed_item = match hint {
@@ -221,13 +225,41 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
             None => auto_parse(&file.file_name),
         };
 
-        print_scan_item(file, &parsed_item);
+        if args.json {
+            json_items.push(to_json_scan_item(file, &parsed_item));
+        } else {
+            print_scan_item(file, &parsed_item);
+        }
         parsed.push(parsed_item);
     }
 
     let summary = summarize_scan(&parsed);
 
     let total = scan.video_files.len();
+    if args.json {
+        let report = ScanJsonReport {
+            source: args.source.display().to_string(),
+            media_summary: MediaSummary {
+                video: scan.video_files.len(),
+                subtitle: scan.subtitle_files.len(),
+                audio: scan.audio_files.len(),
+                other: scan.other_files.len(),
+            },
+            parse_summary: ParseSummary {
+                total,
+                parsed_ok: summary.parsed_ok,
+                parsed_failed: summary.parsed_failed,
+                with_year: summary.with_year,
+                with_season: summary.with_season,
+                with_episode: summary.with_episode,
+            },
+            items: json_items,
+        };
+
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
     println!(
         "Media Summary: video={}, subtitle={}, audio={}, other={}",
         scan.video_files.len(),
@@ -294,6 +326,19 @@ fn print_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) {
     println!();
 }
 
+fn to_json_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) -> ScanItemJson {
+    ScanItemJson {
+        file_name: file.file_name.clone(),
+        title: info.title.clone(),
+        year: info.year,
+        season: info.season,
+        episode: info.episode,
+        media_type: "video".to_string(),
+        detected_kind: detected_kind(info).to_string(),
+        parse_confidence: parse_confidence(info).to_string(),
+    }
+}
+
 #[derive(Debug, Default)]
 struct ScanSummary {
     parsed_ok: usize,
@@ -301,6 +346,44 @@ struct ScanSummary {
     with_year: usize,
     with_season: usize,
     with_episode: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ScanJsonReport {
+    source: String,
+    media_summary: MediaSummary,
+    parse_summary: ParseSummary,
+    items: Vec<ScanItemJson>,
+}
+
+#[derive(Debug, Serialize)]
+struct MediaSummary {
+    video: usize,
+    subtitle: usize,
+    audio: usize,
+    other: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ParseSummary {
+    total: usize,
+    parsed_ok: usize,
+    parsed_failed: usize,
+    with_year: usize,
+    with_season: usize,
+    with_episode: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ScanItemJson {
+    file_name: String,
+    title: Option<String>,
+    year: Option<u16>,
+    season: Option<u16>,
+    episode: Option<u16>,
+    media_type: String,
+    detected_kind: String,
+    parse_confidence: String,
 }
 
 fn summarize_scan(items: &[MediaInfo]) -> ScanSummary {
@@ -513,7 +596,7 @@ fn is_extras_folder(name: &str) -> bool {
 mod tests {
     use super::{
         detected_kind, parse_confidence, preflight_conflicts, resolve_conflict_policy, summarize_scan,
-        truncate_middle, ConflictPolicy,
+        to_json_scan_item, truncate_middle, ConflictPolicy,
     };
     use crate::config::{AppConfig, ConflictMode};
     use crate::parser::MediaInfo;
@@ -687,5 +770,27 @@ mod tests {
         )
         .expect("resolve_year should not fail when lookup errors");
         assert_eq!(year, None);
+    }
+
+    #[test]
+    fn to_json_scan_item_includes_kind_and_confidence() {
+        let file = crate::scanner::ScannedFile {
+            path: std::path::PathBuf::from("/tmp/Show.S01E01.mkv"),
+            file_name: "Show.S01E01.mkv".to_string(),
+            parent_name: "Show".to_string(),
+            extension: ".mkv".to_string(),
+        };
+        let info = MediaInfo {
+            title: Some("Show".to_string()),
+            season: Some(1),
+            episode: Some(1),
+            ..Default::default()
+        };
+
+        let json_item = to_json_scan_item(&file, &info);
+        assert_eq!(json_item.file_name, "Show.S01E01.mkv");
+        assert_eq!(json_item.media_type, "video");
+        assert_eq!(json_item.detected_kind, "show");
+        assert_eq!(json_item.parse_confidence, "high");
     }
 }

@@ -37,6 +37,14 @@ pub fn extract_year_from_input(input: &str) -> Option<u16> {
 }
 
 pub fn extract_season_from_input(input: &str) -> Option<u16> {
+    let lower = input.to_ascii_lowercase();
+    if ["special", "specials", "extras", "featurette", "featurettes"]
+        .iter()
+        .any(|token| lower.contains(token))
+    {
+        return Some(0);
+    }
+
     let patterns = [
         Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"),
         Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"),
@@ -49,4 +57,22 @@ pub fn extract_season_from_input(input: &str) -> Option<u16> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_season_from_input;
+
+    #[test]
+    fn detects_numeric_season_patterns() {
+        assert_eq!(extract_season_from_input("Show.S02.1080p"), Some(2));
+        assert_eq!(extract_season_from_input("Show Season 3 Pack"), Some(3));
+    }
+
+    #[test]
+    fn maps_specials_and_extras_to_season_zero() {
+        assert_eq!(extract_season_from_input("Show Specials"), Some(0));
+        assert_eq!(extract_season_from_input("Show Featurettes Pack"), Some(0));
+        assert_eq!(extract_season_from_input("Show Extras"), Some(0));
+    }
 }

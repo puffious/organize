@@ -6,6 +6,7 @@ A Rust CLI tool that organizes downloaded TV and movie files into media-server f
 
 - Show and movie organization commands
 - Scan mode for metadata preview
+- Scan JSON mode for automation and tooling
 - Parser handles common release-name patterns
 - Optional TMDB year lookup
 - Dry-run support with conflict preview
@@ -19,6 +20,7 @@ A Rust CLI tool that organizes downloaded TV and movie files into media-server f
 cargo run -- show ./downloads/My.Show.Complete ./media/tv --dry-run
 cargo run -- movie ./downloads/My.Movie.2023 ./media/movies --dry-run
 cargo run -- scan ./downloads/My.Show.Complete --type show
+cargo run -- scan ./downloads/My.Show.Complete --type show --json
 ```
 
 ## Command Overview
@@ -39,6 +41,19 @@ cargo run -- --help
 cargo run -- show --help
 cargo run -- movie --help
 cargo run -- scan --help
+```
+
+## Scan Output
+
+`scan` supports two output styles:
+
+- Human-readable default output
+- Machine-readable JSON output with `--json`
+
+Example:
+
+```bash
+cargo run -- scan ./downloads/My.Show.Complete --json
 ```
 
 ## Conflict Handling

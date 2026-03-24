@@ -74,8 +74,11 @@ pub struct ShowMovieArgs {
 pub struct ScanArgs {
     pub source: PathBuf,
 
-    #[arg(long = "type", value_enum)]
+    #[arg(long = "type", value_enum, help = "Hint parser mode (show or movie)")]
     pub r#type: Option<ScanType>,
+
+    #[arg(long, default_value_t = false, help = "Output structured JSON report")]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
