@@ -109,6 +109,7 @@ fn run_show(
 
     let conflict_policy = resolve_conflict_policy(args, config);
     preflight_conflicts(&plan, conflict_policy)?;
+    preflight_destination_access(&plan)?;
 
     if !yes_mode && !prompt::confirm_execute()? {
         info!("Operation cancelled by user");
@@ -185,6 +186,7 @@ fn run_movie(
 
     let conflict_policy = resolve_conflict_policy(args, config);
     preflight_conflicts(&plan, conflict_policy)?;
+    preflight_destination_access(&plan)?;
 
     if !yes_mode && !prompt::confirm_execute()? {
         info!("Operation cancelled by user");
@@ -651,6 +653,57 @@ fn preflight_conflicts(plan: &Plan, policy: ConflictPolicy) -> Result<()> {
     }
 }
 
+fn preflight_destination_access(plan: &Plan) -> Result<()> {
+    let mut blocked = Vec::new();
+    let mut seen = HashSet::new();
+
+    for op in &plan.operations {
+        if let Some(parent) = op.destination.parent() {
+            let key = parent.to_path_buf();
+            if seen.insert(key.clone()) {
+                let probe = nearest_existing_parent(parent);
+                if let Some(existing) = probe {
+                    if is_read_only_dir(existing) {
+                        blocked.push(existing.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    let joined = blocked
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    anyhow::bail!(
+        "destination preflight failed: write access appears blocked for {} (adjust permissions or choose a different destination)",
+        joined
+    )
+}
+
+fn nearest_existing_parent(path: &Path) -> Option<&Path> {
+    let mut current = Some(path);
+    while let Some(p) = current {
+        if p.exists() {
+            return Some(p);
+        }
+        current = p.parent();
+    }
+    None
+}
+
+fn is_read_only_dir(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.permissions().readonly())
+        .unwrap_or(false)
+}
+
 fn resolve_year(
     title: Option<&str>,
     media_type: MediaType,
@@ -706,9 +759,10 @@ fn is_extras_folder(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        confidence_arg_to_rank, confidence_rank, detected_kind, parse_confidence,
-        preflight_conflicts, resolve_conflict_policy, should_include_scan_item, summarize_scan,
-        to_json_scan_item, truncate_middle, ConflictPolicy,
+        confidence_arg_to_rank, confidence_rank, detected_kind, is_read_only_dir,
+        parse_confidence, preflight_conflicts, preflight_destination_access,
+        resolve_conflict_policy, should_include_scan_item, summarize_scan, to_json_scan_item,
+        truncate_middle, ConflictPolicy,
     };
     use crate::config::{AppConfig, ConflictMode};
     use crate::parser::MediaInfo;
@@ -937,6 +991,27 @@ mod tests {
         assert!(!should_include_scan_item(&ok, true, 1));
         assert!(should_include_scan_item(&failed, true, 1));
         assert!(!should_include_scan_item(&failed, false, 2));
+    }
+
+    #[test]
+    fn preflight_destination_access_accepts_writable_temp_path() {
+        let dir = tempdir().expect("create tempdir");
+        let plan = Plan {
+            operations: vec![crate::planner::Operation {
+                source: dir.path().join("src/file.mkv"),
+                destination: dir.path().join("dest/file.mkv"),
+                kind: crate::planner::OperationKind::Copy,
+            }],
+            ..Default::default()
+        };
+
+        assert!(preflight_destination_access(&plan).is_ok());
+    }
+
+    #[test]
+    fn is_read_only_dir_returns_false_for_writable_temp_path() {
+        let dir = tempdir().expect("create tempdir");
+        assert!(!is_read_only_dir(dir.path()));
     }
 
     #[test]
