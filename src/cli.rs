@@ -3,7 +3,11 @@ use std::path::PathBuf;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
-#[command(name = "organize", version, about = "Media file organizer for shows and movies")]
+#[command(
+    name = "organize",
+    version,
+    about = "Media file organizer for shows and movies"
+)]
 pub struct Cli {
     #[arg(short = 'v', action = ArgAction::Count, global = true)]
     pub verbose: u8,
@@ -80,10 +84,18 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = false, help = "Output structured JSON report")]
     pub json: bool,
 
-    #[arg(long, default_value_t = false, help = "Only show items where title parsing failed")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Only show items where title parsing failed"
+    )]
     pub only_failed: bool,
 
-    #[arg(long, value_enum, help = "Only include items at or above this parse confidence")]
+    #[arg(
+        long,
+        value_enum,
+        help = "Only include items at or above this parse confidence"
+    )]
     pub min_confidence: Option<ConfidenceArg>,
 
     #[arg(

@@ -107,7 +107,9 @@ mod tests {
 
     #[test]
     fn parses_black_mirror_style() {
-        let info = parse_show("Black Mirror (2011) - S04E01 - USS Callister (1080p BluRay x265 Panda).mkv");
+        let info = parse_show(
+            "Black Mirror (2011) - S04E01 - USS Callister (1080p BluRay x265 Panda).mkv",
+        );
         assert_eq!(info.title.as_deref(), Some("Black Mirror"));
         assert_eq!(info.year, Some(2011));
         assert_eq!(info.season, Some(4));
@@ -140,7 +142,9 @@ mod tests {
 
     #[test]
     fn parses_folder_game_changer() {
-        let info = parse_show("Game Changer (2019) S05 (1080p DRPO WEB-DL H264 SDR AAC 2.0 English - HONE)");
+        let info = parse_show(
+            "Game Changer (2019) S05 (1080p DRPO WEB-DL H264 SDR AAC 2.0 English - HONE)",
+        );
         assert_eq!(info.title.as_deref(), Some("Game Changer"));
         assert_eq!(info.year, Some(2019));
         assert_eq!(info.season, Some(5));
@@ -156,7 +160,9 @@ mod tests {
 
     #[test]
     fn parses_folder_name_patterns() {
-        let info = parse_show("Black Mirror (2011) Season 4 S04 (1080p BluRay x265 HEVC 10bit AAC 5.1 Panda)");
+        let info = parse_show(
+            "Black Mirror (2011) Season 4 S04 (1080p BluRay x265 HEVC 10bit AAC 5.1 Panda)",
+        );
         assert_eq!(info.title.as_deref(), Some("Black Mirror"));
         assert_eq!(info.year, Some(2011));
         assert_eq!(info.season, Some(4));

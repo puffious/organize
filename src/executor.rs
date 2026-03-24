@@ -35,8 +35,9 @@ pub fn execute_plan(plan: &Plan, overwrite: bool) -> Result<ExecutionResult> {
         }
 
         if let Some(parent) = op.destination.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create destination dir {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create destination dir {}", parent.display())
+            })?;
         }
 
         if overwrite && op.destination.exists() {
@@ -66,13 +67,22 @@ fn execute_operation(op: &Operation) -> Result<()> {
     match op.kind {
         OperationKind::Move => execute_move(op),
         OperationKind::Copy => {
-            std::fs::copy(&op.source, &op.destination)
-                .with_context(|| format!("copy {} -> {} failed", op.source.display(), op.destination.display()))?;
+            std::fs::copy(&op.source, &op.destination).with_context(|| {
+                format!(
+                    "copy {} -> {} failed",
+                    op.source.display(),
+                    op.destination.display()
+                )
+            })?;
             Ok(())
         }
         OperationKind::HardLink => {
             std::fs::hard_link(&op.source, &op.destination).with_context(|| {
-                format!("hardlink {} -> {} failed", op.source.display(), op.destination.display())
+                format!(
+                    "hardlink {} -> {} failed",
+                    op.source.display(),
+                    op.destination.display()
+                )
             })?;
             Ok(())
         }
@@ -80,7 +90,11 @@ fn execute_operation(op: &Operation) -> Result<()> {
             #[cfg(unix)]
             {
                 std::os::unix::fs::symlink(&op.source, &op.destination).with_context(|| {
-                    format!("symlink {} -> {} failed", op.source.display(), op.destination.display())
+                    format!(
+                        "symlink {} -> {} failed",
+                        op.source.display(),
+                        op.destination.display()
+                    )
                 })?;
             }
             Ok(())
@@ -93,10 +107,15 @@ fn execute_move(op: &Operation) -> Result<()> {
         Ok(_) => Ok(()),
         Err(_) => {
             std::fs::copy(&op.source, &op.destination).with_context(|| {
-                format!("cross-device fallback copy {} -> {} failed", op.source.display(), op.destination.display())
+                format!(
+                    "cross-device fallback copy {} -> {} failed",
+                    op.source.display(),
+                    op.destination.display()
+                )
             })?;
-            std::fs::remove_file(&op.source)
-                .with_context(|| format!("failed to remove original file {}", op.source.display()))?;
+            std::fs::remove_file(&op.source).with_context(|| {
+                format!("failed to remove original file {}", op.source.display())
+            })?;
             Ok(())
         }
     }
@@ -107,8 +126,12 @@ fn remove_existing(path: &Path) -> Result<()> {
         std::fs::remove_file(path)
             .with_context(|| format!("failed removing existing destination {}", path.display()))?;
     } else if path.is_dir() {
-        std::fs::remove_dir_all(path)
-            .with_context(|| format!("failed removing existing destination dir {}", path.display()))?;
+        std::fs::remove_dir_all(path).with_context(|| {
+            format!(
+                "failed removing existing destination dir {}",
+                path.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -277,7 +300,10 @@ mod tests {
         assert!(result.failures.is_empty());
         let meta = fs::symlink_metadata(&dst).expect("symlink metadata");
         assert!(meta.file_type().is_symlink());
-        assert_eq!(fs::read_to_string(dst).expect("read destination"), "foxtrot");
+        assert_eq!(
+            fs::read_to_string(dst).expect("read destination"),
+            "foxtrot"
+        );
     }
 
     #[test]
@@ -297,7 +323,8 @@ mod tests {
             unparseable: vec![],
         };
 
-        let result = execute_plan(&plan, false).expect("execute plan should return aggregated result");
+        let result =
+            execute_plan(&plan, false).expect("execute plan should return aggregated result");
         assert_eq!(result.failed, 1);
         assert_eq!(result.succeeded, 0);
         assert_eq!(result.failures.len(), 1);

@@ -56,7 +56,11 @@ pub fn scan_source(source: &Path, exts: &MediaExtensions) -> Result<ScanResult> 
             extension: extension.clone(),
         };
 
-        if exts.video.iter().any(|e| e.eq_ignore_ascii_case(&extension)) {
+        if exts
+            .video
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(&extension))
+        {
             out.video_files.push(item);
         } else if exts
             .subtitle
@@ -64,7 +68,11 @@ pub fn scan_source(source: &Path, exts: &MediaExtensions) -> Result<ScanResult> 
             .any(|e| e.eq_ignore_ascii_case(&extension))
         {
             out.subtitle_files.push(item);
-        } else if exts.audio.iter().any(|e| e.eq_ignore_ascii_case(&extension)) {
+        } else if exts
+            .audio
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(&extension))
+        {
             out.audio_files.push(item);
         } else {
             out.other_files.push(item);

@@ -29,7 +29,8 @@ pub fn extract_year_from_input(input: &str) -> Option<u16> {
         return c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
     }
 
-    let year_standalone = Regex::new(r"(?:^|[^0-9])(19\d{2}|20\d{2})(?:[^0-9]|$)").expect("valid regex");
+    let year_standalone =
+        Regex::new(r"(?:^|[^0-9])(19\d{2}|20\d{2})(?:[^0-9]|$)").expect("valid regex");
     year_standalone
         .captures(input)
         .and_then(|c| c.get(1))

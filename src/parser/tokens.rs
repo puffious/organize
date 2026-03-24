@@ -31,7 +31,8 @@ pub fn title_boundary_index(normalized: &str) -> usize {
         Regex::new(r"\b(19\d{2}|20\d{2})\b").expect("valid regex"),
         Regex::new(r"(?i)\b(480p|720p|1080p|2160p|4K)\b").expect("valid regex"),
         Regex::new(r"(?i)\b(BluRay|BRRip|WEB-DL|WEBRip|HDTV|DVDRip|DRPO)\b").expect("valid regex"),
-        Regex::new(r"(?i)\b(x264|x265|H\.?264|H\.?265|HEVC|AVC|AV1|XviD|DivX)\b").expect("valid regex"),
+        Regex::new(r"(?i)\b(x264|x265|H\.?264|H\.?265|HEVC|AVC|AV1|XviD|DivX)\b")
+            .expect("valid regex"),
         Regex::new(r"(?i)\b(AAC(2\.0|5\.1)?|AC3|DTS|FLAC|MP3|EAC3|Atmos|TrueHD)\b")
             .expect("valid regex"),
         Regex::new(r"(?i)\b(SDR|HDR|HDR10\+?|DV|DoVi|Dolby\s*Vision)\b").expect("valid regex"),

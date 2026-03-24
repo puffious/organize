@@ -21,7 +21,10 @@ pub fn init_logging(verbosity: u8, log_file: Option<&Path>) -> Result<()> {
             .open(path)?;
 
         let stdout_layer = fmt::layer().with_target(false);
-        let file_layer = fmt::layer().with_ansi(false).with_writer(file).with_target(true);
+        let file_layer = fmt::layer()
+            .with_ansi(false)
+            .with_writer(file)
+            .with_target(true);
 
         tracing_subscriber::registry()
             .with(env_filter)
