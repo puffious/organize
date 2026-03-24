@@ -1,0 +1,22 @@
+[general]
+default_mode = "move"
+auto_confirm = false
+clean_empty_dirs = false
+conflict_mode = "skip"
+log_file = ""
+
+[tmdb]
+api_key = ""
+
+[naming]
+show_folder = "{Series Title} ({Series Year})"
+season_folder = "Season {Season:00}"
+movie_folder = "{Movie Title} ({Movie Year})"
+
+[media_extensions]
+video = [".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".flv", ".webm", ".ts", ".m2ts"]
+subtitle = [".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup", ".smi"]
+audio = [".mp3", ".flac", ".aac", ".ac3", ".dts", ".mka", ".ogg", ".wav", ".wma", ".eac3", ".m4a"]
+
+[non_media]
+mode = "keep"
