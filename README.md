@@ -50,6 +50,8 @@ cargo run -- scan --help
 - Human-readable default output
 - Machine-readable JSON output with `--json`
 
+JSON item records include parse metadata plus source details (`file_name`, `source_path`, `extension`, title/year/season/episode, detected kind, confidence).
+
 Example:
 
 ```bash

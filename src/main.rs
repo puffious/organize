@@ -370,6 +370,8 @@ fn print_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) {
 fn to_json_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) -> ScanItemJson {
     ScanItemJson {
         file_name: file.file_name.clone(),
+        source_path: file.path.display().to_string(),
+        extension: file.extension.clone(),
         title: info.title.clone(),
         year: info.year,
         season: info.season,
@@ -419,6 +421,8 @@ struct ParseSummary {
 #[derive(Debug, Serialize)]
 struct ScanItemJson {
     file_name: String,
+    source_path: String,
+    extension: String,
     title: Option<String>,
     year: Option<u16>,
     season: Option<u16>,
@@ -575,14 +579,32 @@ fn present_plan(
                 .iter()
                 .filter(|c| c.kind == ConflictKind::ExistingDirectory)
                 .count();
-            println!("Conflict Types: existing-file={}, existing-directory={}", files, dirs);
+            let parent_file = plan
+                .conflict_details
+                .iter()
+                .filter(|c| c.kind == ConflictKind::ParentPathIsFile)
+                .count();
+            println!(
+                "Conflict Types: existing-file={}, existing-directory={}, parent-path-file={}",
+                files, dirs, parent_file
+            );
 
             for detail in &plan.conflict_details {
                 let kind = match detail.kind {
                     ConflictKind::ExistingFile => "existing-file",
                     ConflictKind::ExistingDirectory => "existing-directory",
+                    ConflictKind::ParentPathIsFile => "parent-path-file",
                 };
-                println!("CONFLICT [{}]: {}", kind, detail.path.display());
+                if let Some(blocked_by) = &detail.blocked_by {
+                    println!(
+                        "CONFLICT [{}]: {} (blocked by file: {})",
+                        kind,
+                        detail.path.display(),
+                        blocked_by.display()
+                    );
+                } else {
+                    println!("CONFLICT [{}]: {}", kind, detail.path.display());
+                }
             }
         } else {
             for path in &plan.conflicts {
@@ -654,7 +676,8 @@ fn preflight_conflicts(plan: &Plan, policy: ConflictPolicy) -> Result<()> {
 }
 
 fn preflight_destination_access(plan: &Plan) -> Result<()> {
-    let mut blocked = Vec::new();
+    let mut read_only_blocked = Vec::new();
+    let mut parent_file_blocked = Vec::new();
     let mut seen = HashSet::new();
 
     for op in &plan.operations {
@@ -663,28 +686,47 @@ fn preflight_destination_access(plan: &Plan) -> Result<()> {
             if seen.insert(key.clone()) {
                 let probe = nearest_existing_parent(parent);
                 if let Some(existing) = probe {
-                    if is_read_only_dir(existing) {
-                        blocked.push(existing.to_path_buf());
+                    if existing.is_file() {
+                        parent_file_blocked.push((parent.to_path_buf(), existing.to_path_buf()));
+                    } else if is_read_only_dir(existing) {
+                        read_only_blocked.push(existing.to_path_buf());
                     }
                 }
             }
         }
     }
 
-    if blocked.is_empty() {
+    if read_only_blocked.is_empty() && parent_file_blocked.is_empty() {
         return Ok(());
     }
 
-    let joined = blocked
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let mut reasons = Vec::new();
 
-    anyhow::bail!(
-        "destination preflight failed: write access appears blocked for {} (adjust permissions or choose a different destination)",
-        joined
-    )
+    if !read_only_blocked.is_empty() {
+        let joined = read_only_blocked
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        reasons.push(format!(
+            "read-only directories: {} (adjust permissions or choose a different destination)",
+            joined
+        ));
+    }
+
+    if !parent_file_blocked.is_empty() {
+        let joined = parent_file_blocked
+            .iter()
+            .map(|(parent, blocker)| format!("{} blocked by {}", parent.display(), blocker.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        reasons.push(format!(
+            "destination parent path collides with existing file: {}",
+            joined
+        ));
+    }
+
+    anyhow::bail!("destination preflight failed: {}", reasons.join("; "))
 }
 
 fn nearest_existing_parent(path: &Path) -> Option<&Path> {
@@ -956,6 +998,8 @@ mod tests {
 
         let json_item = to_json_scan_item(&file, &info);
         assert_eq!(json_item.file_name, "Show.S01E01.mkv");
+        assert_eq!(json_item.source_path, "/tmp/Show.S01E01.mkv");
+        assert_eq!(json_item.extension, ".mkv");
         assert_eq!(json_item.media_type, "video");
         assert_eq!(json_item.detected_kind, "show");
         assert_eq!(json_item.parse_confidence, "high");
@@ -1012,6 +1056,26 @@ mod tests {
     fn is_read_only_dir_returns_false_for_writable_temp_path() {
         let dir = tempdir().expect("create tempdir");
         assert!(!is_read_only_dir(dir.path()));
+    }
+
+    #[test]
+    fn preflight_destination_access_rejects_parent_path_file_collision() {
+        let dir = tempdir().expect("create tempdir");
+        let blocker = dir.path().join("dest");
+        std::fs::write(&blocker, b"file blocker").expect("write blocker file");
+
+        let plan = Plan {
+            operations: vec![crate::planner::Operation {
+                source: dir.path().join("src/file.mkv"),
+                destination: blocker.join("child/file.mkv"),
+                kind: crate::planner::OperationKind::Copy,
+            }],
+            ..Default::default()
+        };
+
+        let err = preflight_destination_access(&plan).expect_err("expected parent file collision to fail");
+        let message = err.to_string();
+        assert!(message.contains("parent path collides with existing file"));
     }
 
     #[test]

@@ -43,12 +43,14 @@ pub struct UnparseableItem {
 pub enum ConflictKind {
     ExistingFile,
     ExistingDirectory,
+    ParentPathIsFile,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConflictItem {
     pub path: PathBuf,
     pub kind: ConflictKind,
+    pub blocked_by: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -306,6 +308,16 @@ fn lower_stem(path: &Path) -> Option<String> {
 }
 
 fn record_conflict(plan: &mut Plan, destination: &Path) {
+    if let Some(blocker) = parent_path_file_blocker(destination) {
+        plan.conflicts.push(destination.to_path_buf());
+        plan.conflict_details.push(ConflictItem {
+            path: destination.to_path_buf(),
+            kind: ConflictKind::ParentPathIsFile,
+            blocked_by: Some(blocker),
+        });
+        return;
+    }
+
     if !destination.exists() {
         return;
     }
@@ -320,7 +332,22 @@ fn record_conflict(plan: &mut Plan, destination: &Path) {
     plan.conflict_details.push(ConflictItem {
         path: destination.to_path_buf(),
         kind,
+        blocked_by: None,
     });
+}
+
+fn parent_path_file_blocker(destination: &Path) -> Option<PathBuf> {
+    let mut current = destination.parent();
+    while let Some(path) = current {
+        if path.exists() {
+            if path.is_file() {
+                return Some(path.to_path_buf());
+            }
+            return None;
+        }
+        current = path.parent();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -571,5 +598,53 @@ mod tests {
         assert_eq!(plan.conflicts.len(), 1);
         assert_eq!(plan.conflict_details.len(), 1);
         assert_eq!(plan.conflict_details[0].kind, ConflictKind::ExistingFile);
+    }
+
+    #[test]
+    fn show_plan_records_parent_path_file_conflict_kind() {
+        let dir = tempdir().expect("create tempdir");
+        let source_parent = dir.path().join("source");
+        std::fs::create_dir_all(&source_parent).expect("create source dir");
+        let video_path = source_parent.join("Show.S01E01.mkv");
+        std::fs::write(&video_path, b"video").expect("write source video");
+
+        let dest_root = dir.path().join("dest");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        let blocked_parent = dest_root.join("Show (2022)");
+        std::fs::write(&blocked_parent, b"not a directory").expect("write blocker file");
+
+        let scan = ScanResult {
+            video_files: vec![scanned(video_path.clone(), "Show.S01E01.mkv", "source", ".mkv")],
+            subtitle_files: vec![],
+            audio_files: vec![],
+            other_files: vec![],
+        };
+
+        let parsed = vec![parsed(
+            video_path,
+            "Show.S01E01.mkv",
+            Some("Show"),
+            Some(2022),
+            Some(1),
+            Some(1),
+        )];
+
+        let plan = build_show_plan(
+            &scan,
+            &parsed,
+            &dest_root,
+            None,
+            None,
+            EffectiveOperationMode::Move,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.conflict_details.len(), 1);
+        assert_eq!(plan.conflict_details[0].kind, ConflictKind::ParentPathIsFile);
+        assert_eq!(
+            plan.conflict_details[0].blocked_by.as_deref(),
+            Some(blocked_parent.as_path())
+        );
     }
 }
