@@ -15,6 +15,8 @@ use config::{AppConfig, EffectiveOperationMode, MediaType, NonMediaMode};
 use parser::{parse_movie, parse_show, MediaInfo};
 use planner::{build_movie_plan, build_show_plan, Plan};
 use scanner::scan_source;
+use std::collections::HashSet;
+use std::path::Path;
 use tmdb::MetadataLookup;
 use tracing::{info, warn};
 
@@ -90,7 +92,7 @@ fn run_show(
         non_media_mode,
     )?;
 
-    present_plan(&plan, true, dry_run)?;
+    present_plan(&plan, true, dry_run, &args.source, &args.destination)?;
 
     if dry_run {
         return Ok(());
@@ -102,6 +104,13 @@ fn run_show(
     }
 
     let result = executor::execute_plan(&plan, args.overwrite)?;
+    println!(
+        "Execution: {} succeeded, {} failed, {} skipped",
+        result.succeeded, result.failed, result.skipped
+    );
+    for failure in &result.failures {
+        println!("FAILED: {}", failure);
+    }
 
     if args.clean || config.general.clean_empty_dirs {
         scanner::clean_empty_dirs(&args.source)?;
@@ -156,7 +165,7 @@ fn run_movie(
         non_media_mode,
     )?;
 
-    present_plan(&plan, false, dry_run)?;
+    present_plan(&plan, false, dry_run, &args.source, &args.destination)?;
 
     if dry_run {
         return Ok(());
@@ -168,6 +177,13 @@ fn run_movie(
     }
 
     let result = executor::execute_plan(&plan, args.overwrite)?;
+    println!(
+        "Execution: {} succeeded, {} failed, {} skipped",
+        result.succeeded, result.failed, result.skipped
+    );
+    for failure in &result.failures {
+        println!("FAILED: {}", failure);
+    }
 
     if args.clean || config.general.clean_empty_dirs {
         scanner::clean_empty_dirs(&args.source)?;
@@ -247,17 +263,33 @@ fn print_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) {
     println!();
 }
 
-fn present_plan(plan: &Plan, is_show: bool, dry_run: bool) -> Result<()> {
+fn present_plan(
+    plan: &Plan,
+    is_show: bool,
+    dry_run: bool,
+    source: &Path,
+    destination: &Path,
+) -> Result<()> {
     if dry_run {
         println!(
             "[DRY RUN] Organizing {}",
             if is_show { "show" } else { "movie" }
         );
+        println!("Source: {}", source.display());
+        println!("Destination: {}", destination.display());
         println!();
     }
 
+    let conflicts: HashSet<_> = plan.conflicts.iter().collect();
     for op in &plan.operations {
-        println!("{} -> {}", op.source.display(), op.destination.display());
+        let marker = if conflicts.contains(&op.destination) {
+            "[CONFLICT]"
+        } else {
+            "[OK]"
+        };
+        let src = truncate_middle(&op.source.display().to_string(), 56);
+        let dst = truncate_middle(&op.destination.display().to_string(), 56);
+        println!("  {} {} -> {}", marker, src, dst);
     }
 
     if !plan.conflicts.is_empty() {
@@ -284,6 +316,17 @@ fn present_plan(plan: &Plan, is_show: bool, dry_run: bool) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn truncate_middle(value: &str, max_len: usize) -> String {
+    if value.len() <= max_len || max_len < 8 {
+        return value.to_string();
+    }
+
+    let keep = (max_len - 3) / 2;
+    let start = &value[..keep];
+    let end = &value[value.len() - keep..];
+    format!("{}...{}", start, end)
 }
 
 fn resolve_year(
@@ -330,4 +373,22 @@ fn is_extras_folder(name: &str) -> bool {
     ["extras", "featurettes", "behind the scenes", "specials"]
         .iter()
         .any(|token| n.contains(token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_middle;
+
+    #[test]
+    fn truncate_middle_short_string_unchanged() {
+        assert_eq!(truncate_middle("short", 20), "short");
+    }
+
+    #[test]
+    fn truncate_middle_long_string_uses_ellipsis() {
+        let value = "/this/is/a/very/long/path/that/needs/truncation/file.mkv";
+        let out = truncate_middle(value, 24);
+        assert!(out.contains("..."));
+        assert!(out.len() <= 25);
+    }
 }
