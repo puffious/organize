@@ -66,11 +66,12 @@ pub fn build_show_plan(
         let title = forced_title.clone().or_else(|| info.title.clone());
         let year = forced_year.or(info.year);
         let season = info.season;
+        let episode = info.episode;
 
-        let (Some(title), Some(season)) = (title, season) else {
+        let (Some(title), Some(season), Some(_episode)) = (title, season, episode) else {
             plan.unparseable.push(UnparseableItem {
                 path: src,
-                reason: "missing title or season".to_string(),
+                reason: "missing title, season, or episode".to_string(),
             });
             continue;
         };
@@ -120,6 +121,7 @@ pub fn build_movie_plan(
 ) -> Result<Plan> {
     let mut plan = Plan::default();
     let mut parent_to_folder = HashMap::<PathBuf, PathBuf>::new();
+    let mut default_target_folder: Option<PathBuf> = None;
 
     for info in parsed {
         let Some(src) = info.full_path.clone() else {
@@ -143,6 +145,9 @@ pub fn build_movie_plan(
             title
         };
         let target_folder = destination_root.join(folder_name);
+        if default_target_folder.is_none() {
+            default_target_folder = Some(target_folder.clone());
+        }
         let dest = target_folder.join(&info.original_filename);
 
         if dest.exists() {
@@ -161,6 +166,7 @@ pub fn build_movie_plan(
     }
 
     if let NonMediaPolicy::Keep = non_media_mode {
+        let fallback = default_target_folder.clone();
         for item in scan
             .subtitle_files
             .iter()
@@ -174,7 +180,15 @@ pub fn build_movie_plan(
                         destination: target.join(&item.file_name),
                         kind: mode.into(),
                     });
+                    continue;
                 }
+            }
+            if let Some(target) = &fallback {
+                plan.operations.push(Operation {
+                    source: item.path.clone(),
+                    destination: target.join(&item.file_name),
+                    kind: mode.into(),
+                });
             }
         }
     }

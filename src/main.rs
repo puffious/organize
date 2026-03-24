@@ -49,11 +49,18 @@ fn run_show(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Res
             parsed.extension = f.extension.clone();
             parsed.full_path = Some(f.path.clone());
 
+            if parsed.title.is_none() {
+                parsed.title = parse_show(&f.parent_name).title;
+            }
+
             if parsed.year.is_none() {
                 parsed.year = parser::extract_year_from_input(&f.parent_name);
             }
             if parsed.season.is_none() {
                 parsed.season = parser::extract_season_from_input(&f.parent_name);
+            }
+            if parsed.season.is_none() && is_extras_folder(&f.parent_name) {
+                parsed.season = Some(0);
             }
 
             if parsed.year.is_none() {
@@ -121,6 +128,9 @@ fn run_movie(args: &cli::ShowMovieArgs, config: &AppConfig, cli_yes: bool) -> Re
             parsed.original_filename = f.file_name.clone();
             parsed.extension = f.extension.clone();
             parsed.full_path = Some(f.path.clone());
+            if parsed.title.is_none() {
+                parsed.title = parse_movie(&f.parent_name).title;
+            }
             if parsed.year.is_none() {
                 parsed.year = parser::extract_year_from_input(&f.parent_name);
             }
@@ -317,4 +327,11 @@ fn resolve_season_episode_if_missing(info: &mut MediaInfo, yes_mode: bool) -> Re
         }
     }
     Ok(())
+}
+
+fn is_extras_folder(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["extras", "featurettes", "behind the scenes", "specials"]
+        .iter()
+        .any(|token| n.contains(token))
 }
