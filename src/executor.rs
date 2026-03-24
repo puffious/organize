@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use tracing::warn;
 
 use crate::planner::{Operation, OperationKind, Plan};
 
@@ -9,6 +10,7 @@ pub struct ExecutionResult {
     pub succeeded: usize,
     pub failed: usize,
     pub skipped: usize,
+    pub failures: Vec<String>,
 }
 
 impl ExecutionResult {
@@ -43,7 +45,17 @@ pub fn execute_plan(plan: &Plan, overwrite: bool) -> Result<ExecutionResult> {
 
         match execute_operation(op) {
             Ok(()) => result.succeeded += 1,
-            Err(_) => result.failed += 1,
+            Err(err) => {
+                result.failed += 1;
+                let detail = format!(
+                    "{} -> {}: {}",
+                    op.source.display(),
+                    op.destination.display(),
+                    err
+                );
+                warn!("operation failed: {}", detail);
+                result.failures.push(detail);
+            }
         }
     }
 
@@ -99,4 +111,117 @@ fn remove_existing(path: &Path) -> Result<()> {
             .with_context(|| format!("failed removing existing destination dir {}", path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planner::{Operation, OperationKind, Plan};
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn write_file(path: &Path, body: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent directory");
+        }
+        fs::write(path, body).expect("write test file");
+    }
+
+    #[test]
+    fn copy_operation_copies_file() {
+        let dir = tempdir().expect("create tempdir");
+        let src = dir.path().join("src/a.txt");
+        let dst = dir.path().join("dst/a.txt");
+        write_file(&src, "alpha");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: src.clone(),
+                destination: dst.clone(),
+                kind: OperationKind::Copy,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, false).expect("execute plan");
+        assert_eq!(result.succeeded, 1);
+        assert!(result.failures.is_empty());
+        assert_eq!(fs::read_to_string(dst).expect("read destination"), "alpha");
+        assert_eq!(fs::read_to_string(src).expect("read source"), "alpha");
+    }
+
+    #[test]
+    fn move_operation_moves_file() {
+        let dir = tempdir().expect("create tempdir");
+        let src = dir.path().join("src/b.txt");
+        let dst = dir.path().join("dst/b.txt");
+        write_file(&src, "beta");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: src.clone(),
+                destination: dst.clone(),
+                kind: OperationKind::Move,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, false).expect("execute plan");
+        assert_eq!(result.succeeded, 1);
+        assert!(result.failures.is_empty());
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(dst).expect("read destination"), "beta");
+    }
+
+    #[test]
+    fn existing_destination_is_skipped_when_overwrite_disabled() {
+        let dir = tempdir().expect("create tempdir");
+        let src = dir.path().join("src/c.txt");
+        let dst = dir.path().join("dst/c.txt");
+        write_file(&src, "new");
+        write_file(&dst, "old");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: src.clone(),
+                destination: dst.clone(),
+                kind: OperationKind::Copy,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, false).expect("execute plan");
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.succeeded, 0);
+        assert!(result.failures.is_empty());
+        assert_eq!(fs::read_to_string(dst).expect("read destination"), "old");
+        assert_eq!(fs::read_to_string(src).expect("read source"), "new");
+    }
+
+    #[test]
+    fn overwrite_replaces_existing_destination() {
+        let dir = tempdir().expect("create tempdir");
+        let src = dir.path().join("src/d.txt");
+        let dst = dir.path().join("dst/d.txt");
+        write_file(&src, "fresh");
+        write_file(&dst, "stale");
+
+        let plan = Plan {
+            operations: vec![Operation {
+                source: src,
+                destination: dst.clone(),
+                kind: OperationKind::Copy,
+            }],
+            conflicts: vec![],
+            unparseable: vec![],
+        };
+
+        let result = execute_plan(&plan, true).expect("execute plan");
+        assert_eq!(result.succeeded, 1);
+        assert!(result.failures.is_empty());
+        assert_eq!(fs::read_to_string(dst).expect("read destination"), "fresh");
+    }
 }

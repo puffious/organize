@@ -231,3 +231,127 @@ fn attach_non_media(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::EffectiveOperationMode;
+    use crate::parser::MediaInfo;
+    use crate::scanner::{ScanResult, ScannedFile};
+
+    fn scanned(path: PathBuf, file_name: &str, parent_name: &str, extension: &str) -> ScannedFile {
+        ScannedFile {
+            path,
+            file_name: file_name.to_string(),
+            parent_name: parent_name.to_string(),
+            extension: extension.to_string(),
+        }
+    }
+
+    fn parsed(path: PathBuf, file_name: &str, title: Option<&str>, year: Option<u16>, season: Option<u16>, episode: Option<u16>) -> MediaInfo {
+        MediaInfo {
+            title: title.map(str::to_string),
+            year,
+            season,
+            episode,
+            extension: ".mkv".to_string(),
+            original_filename: file_name.to_string(),
+            full_path: Some(path),
+        }
+    }
+
+    #[test]
+    fn show_plan_routes_to_season_and_attaches_non_media() {
+        let source_parent = PathBuf::from("/tmp/source/Show.S01");
+        let video_path = source_parent.join("Show.S01E01.mkv");
+        let subtitle_path = source_parent.join("Show.S01E01.srt");
+        let other_path = source_parent.join("poster.jpg");
+
+        let scan = ScanResult {
+            video_files: vec![scanned(video_path.clone(), "Show.S01E01.mkv", "Show.S01", ".mkv")],
+            subtitle_files: vec![scanned(subtitle_path.clone(), "Show.S01E01.srt", "Show.S01", ".srt")],
+            audio_files: vec![],
+            other_files: vec![scanned(other_path.clone(), "poster.jpg", "Show.S01", ".jpg")],
+        };
+
+        let parsed = vec![parsed(video_path, "Show.S01E01.mkv", Some("Show"), Some(2022), Some(1), Some(1))];
+        let dest = PathBuf::from("/tmp/dest");
+
+        let plan = build_show_plan(
+            &scan,
+            &parsed,
+            &dest,
+            None,
+            None,
+            EffectiveOperationMode::Move,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.operations.len(), 3);
+        assert!(plan.unparseable.is_empty());
+        assert!(plan.operations.iter().any(|op| op.destination.ends_with("Show (2022)/Season 01/Show.S01E01.mkv")));
+        assert!(plan.operations.iter().any(|op| op.source == subtitle_path));
+        assert!(plan.operations.iter().any(|op| op.source == other_path));
+    }
+
+    #[test]
+    fn show_plan_marks_missing_episode_as_unparseable() {
+        let source_parent = PathBuf::from("/tmp/source/Show.S01");
+        let video_path = source_parent.join("Show.S01.only.mkv");
+        let scan = ScanResult {
+            video_files: vec![scanned(video_path.clone(), "Show.S01.only.mkv", "Show.S01", ".mkv")],
+            subtitle_files: vec![],
+            audio_files: vec![],
+            other_files: vec![],
+        };
+
+        let parsed = vec![parsed(video_path, "Show.S01.only.mkv", Some("Show"), Some(2022), Some(1), None)];
+        let plan = build_show_plan(
+            &scan,
+            &parsed,
+            Path::new("/tmp/dest"),
+            None,
+            None,
+            EffectiveOperationMode::Move,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.operations.len(), 0);
+        assert_eq!(plan.unparseable.len(), 1);
+    }
+
+    #[test]
+    fn movie_plan_uses_fallback_folder_for_unmatched_non_media() {
+        let video_parent = PathBuf::from("/tmp/source/movie");
+        let video_path = video_parent.join("Movie.2023.mkv");
+        let subtitle_path = video_parent.join("Movie.2023.srt");
+        let orphan_other = PathBuf::from("/tmp/source/extras/readme.txt");
+
+        let scan = ScanResult {
+            video_files: vec![scanned(video_path.clone(), "Movie.2023.mkv", "movie", ".mkv")],
+            subtitle_files: vec![scanned(subtitle_path, "Movie.2023.srt", "movie", ".srt")],
+            audio_files: vec![],
+            other_files: vec![scanned(orphan_other.clone(), "readme.txt", "extras", ".txt")],
+        };
+
+        let parsed = vec![parsed(video_path, "Movie.2023.mkv", Some("Movie"), Some(2023), None, None)];
+        let dest_root = PathBuf::from("/tmp/dest");
+
+        let plan = build_movie_plan(
+            &scan,
+            &parsed,
+            &dest_root,
+            None,
+            None,
+            EffectiveOperationMode::Copy,
+            NonMediaPolicy::Keep,
+        )
+        .expect("plan should build");
+
+        assert_eq!(plan.operations.len(), 3);
+        let fallback_dest = dest_root.join("Movie (2023)").join("readme.txt");
+        assert!(plan.operations.iter().any(|op| op.destination == fallback_dest && op.source == orphan_other));
+    }
+}
