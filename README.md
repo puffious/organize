@@ -1,3 +1,5 @@
+![wait, it's all AI? always has been](docs/ai.jpg)
+
 # organize
 
 A Rust CLI tool that organizes downloaded TV and movie files into media-server friendly folder structures.
@@ -17,10 +19,10 @@ A Rust CLI tool that organizes downloaded TV and movie files into media-server f
 ## Quick Start
 
 ```bash
-cargo run -- show ./downloads/My.Show.Complete ./media/tv --dry-run
-cargo run -- movie ./downloads/My.Movie.2023 ./media/movies --dry-run
-cargo run -- scan ./downloads/My.Show.Complete --type show
-cargo run -- scan ./downloads/My.Show.Complete --type show --json
+organize show ./downloads/My.Show.Complete ./media/tv --dry-run
+organize movie ./downloads/My.Movie.2023 ./media/movies --dry-run
+organize scan ./downloads/My.Show.Complete --type show
+organize scan ./downloads/My.Show.Complete --type show --json
 ```
 
 ## Command Overview
@@ -37,10 +39,10 @@ COMMANDS:
 Use `--help` at each level:
 
 ```bash
-cargo run -- --help
-cargo run -- show --help
-cargo run -- movie --help
-cargo run -- scan --help
+organize --help
+organize show --help
+organize movie --help
+organize scan --help
 ```
 
 ## Scan Output
@@ -55,10 +57,10 @@ JSON output includes filter metadata and omitted counts, and item records includ
 Example:
 
 ```bash
-cargo run -- scan ./downloads/My.Show.Complete --json
-cargo run -- scan ./downloads/My.Show.Complete --json --output ./reports/scan.json
-cargo run -- scan ./downloads/My.Show.Complete --only-failed
-cargo run -- scan ./downloads/My.Show.Complete --min-confidence medium
+organize scan ./downloads/My.Show.Complete --json
+organize scan ./downloads/My.Show.Complete --json --output ./reports/scan.json
+organize scan ./downloads/My.Show.Complete --only-failed
+organize scan ./downloads/My.Show.Complete --min-confidence medium
 ```
 
 ## Conflict Handling
