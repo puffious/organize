@@ -39,25 +39,13 @@ impl EffectiveOperationMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
     pub tmdb: TmdbConfig,
     pub naming: NamingConfig,
     pub media_extensions: MediaExtensions,
     pub non_media: NonMediaConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            tmdb: TmdbConfig::default(),
-            naming: NamingConfig::default(),
-            media_extensions: MediaExtensions::default(),
-            non_media: NonMediaConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {
@@ -244,10 +232,12 @@ impl Default for MediaExtensions {
             .into_iter()
             .map(str::to_string)
             .collect(),
-            subtitle: vec![".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup", ".smi"]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
+            subtitle: vec![
+                ".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup", ".smi",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
             audio: vec![
                 ".mp3", ".flac", ".aac", ".ac3", ".dts", ".mka", ".ogg", ".wav", ".wma", ".eac3",
                 ".m4a",
@@ -386,9 +376,11 @@ mod tests {
 
     #[test]
     fn general_merge_ignores_absent_fields() {
-        let mut general = GeneralConfig::default();
-        general.default_mode = "copy".to_string();
-        general.auto_confirm = true;
+        let mut general = GeneralConfig {
+            default_mode: "copy".to_string(),
+            auto_confirm: true,
+            ..Default::default()
+        };
 
         general.merge(PartialGeneralConfig {
             default_mode: None,

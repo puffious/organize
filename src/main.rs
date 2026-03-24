@@ -1,7 +1,7 @@
 mod cli;
 mod config;
-mod logging;
 mod executor;
+mod logging;
 mod parser;
 mod planner;
 mod prompt;
@@ -81,7 +81,12 @@ fn run_show(
         }
 
         if item.year.is_none() {
-            item.year = resolve_year(item.title.as_deref(), MediaType::Show, yes_mode, &tmdb_client)?;
+            item.year = resolve_year(
+                item.title.as_deref(),
+                MediaType::Show,
+                yes_mode,
+                &tmdb_client,
+            )?;
         }
 
         if item.season.is_none() || item.episode.is_none() {
@@ -163,7 +168,12 @@ fn run_movie(
             item.year = parser::extract_year_from_input(&f.parent_name);
         }
         if item.year.is_none() {
-            item.year = resolve_year(item.title.as_deref(), MediaType::Movie, yes_mode, &tmdb_client)?;
+            item.year = resolve_year(
+                item.title.as_deref(),
+                MediaType::Movie,
+                yes_mode,
+                &tmdb_client,
+            )?;
         }
         parsed.push(item);
     }
@@ -253,9 +263,16 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
             .filter(|info| should_include_scan_item(info, args.only_failed, min_confidence))
             .count()
     };
+    let omitted_by_filters = total.saturating_sub(emitted_total);
     if args.json {
         let report = ScanJsonReport {
             source: args.source.display().to_string(),
+            filters: ScanFiltersJson {
+                only_failed: args.only_failed,
+                min_confidence: args
+                    .min_confidence
+                    .map(|v| format!("{:?}", v).to_ascii_lowercase()),
+            },
             media_summary: MediaSummary {
                 video: scan.video_files.len(),
                 subtitle: scan.subtitle_files.len(),
@@ -265,6 +282,7 @@ fn run_scan(args: &cli::ScanArgs, config: &AppConfig) -> Result<()> {
             parse_summary: ParseSummary {
                 total_scanned: total,
                 total_emitted: emitted_total,
+                omitted_by_filters,
                 parsed_ok: emitted_summary.parsed_ok,
                 parsed_failed: emitted_summary.parsed_failed,
                 with_year: emitted_summary.with_year,
@@ -341,7 +359,9 @@ fn print_scan_item(file: &scanner::ScannedFile, info: &MediaInfo) {
     println!("  {}", file.file_name);
     println!(
         "    Title:   {}",
-        info.title.clone().unwrap_or_else(|| "(not found)".to_string())
+        info.title
+            .clone()
+            .unwrap_or_else(|| "(not found)".to_string())
     );
     println!(
         "    Year:    {}",
@@ -394,9 +414,16 @@ struct ScanSummary {
 #[derive(Debug, Serialize)]
 struct ScanJsonReport {
     source: String,
+    filters: ScanFiltersJson,
     media_summary: MediaSummary,
     parse_summary: ParseSummary,
     items: Vec<ScanItemJson>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScanFiltersJson {
+    only_failed: bool,
+    min_confidence: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -411,6 +438,7 @@ struct MediaSummary {
 struct ParseSummary {
     total_scanned: usize,
     total_emitted: usize,
+    omitted_by_filters: usize,
     parsed_ok: usize,
     parsed_failed: usize,
     with_year: usize,
@@ -717,7 +745,9 @@ fn preflight_destination_access(plan: &Plan) -> Result<()> {
     if !parent_file_blocked.is_empty() {
         let joined = parent_file_blocked
             .iter()
-            .map(|(parent, blocker)| format!("{} blocked by {}", parent.display(), blocker.display()))
+            .map(|(parent, blocker)| {
+                format!("{} blocked by {}", parent.display(), blocker.display())
+            })
             .collect::<Vec<_>>()
             .join(", ");
         reasons.push(format!(
@@ -801,10 +831,10 @@ fn is_extras_folder(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        confidence_arg_to_rank, confidence_rank, detected_kind, is_read_only_dir,
-        parse_confidence, preflight_conflicts, preflight_destination_access,
-        resolve_conflict_policy, should_include_scan_item, summarize_scan, to_json_scan_item,
-        truncate_middle, ConflictPolicy,
+        confidence_arg_to_rank, confidence_rank, detected_kind, is_read_only_dir, parse_confidence,
+        preflight_conflicts, preflight_destination_access, resolve_conflict_policy,
+        should_include_scan_item, summarize_scan, to_json_scan_item, truncate_middle,
+        ConflictPolicy,
     };
     use crate::config::{AppConfig, ConflictMode};
     use crate::parser::MediaInfo;
@@ -815,12 +845,19 @@ mod tests {
     struct FailingLookup;
 
     impl MetadataLookup for FailingLookup {
-        fn lookup_year(&self, _title: &str, _media_type: crate::config::MediaType) -> anyhow::Result<Option<u16>> {
+        fn lookup_year(
+            &self,
+            _title: &str,
+            _media_type: crate::config::MediaType,
+        ) -> anyhow::Result<Option<u16>> {
             anyhow::bail!("network unavailable")
         }
     }
 
-    fn args(overwrite: bool, on_conflict: Option<crate::cli::ConflictArg>) -> crate::cli::ShowMovieArgs {
+    fn args(
+        overwrite: bool,
+        on_conflict: Option<crate::cli::ConflictArg>,
+    ) -> crate::cli::ShowMovieArgs {
         crate::cli::ShowMovieArgs {
             source: std::path::PathBuf::from("/tmp/src"),
             destination: std::path::PathBuf::from("/tmp/dst"),
@@ -888,15 +925,25 @@ mod tests {
         let cfg_abort = config_with_conflict_mode(ConflictMode::Abort);
         let cfg_skip = config_with_conflict_mode(ConflictMode::Skip);
 
-        assert_eq!(resolve_conflict_policy(&args, &cfg_overwrite), ConflictPolicy::Overwrite);
-        assert_eq!(resolve_conflict_policy(&args, &cfg_abort), ConflictPolicy::Abort);
-        assert_eq!(resolve_conflict_policy(&args, &cfg_skip), ConflictPolicy::Skip);
+        assert_eq!(
+            resolve_conflict_policy(&args, &cfg_overwrite),
+            ConflictPolicy::Overwrite
+        );
+        assert_eq!(
+            resolve_conflict_policy(&args, &cfg_abort),
+            ConflictPolicy::Abort
+        );
+        assert_eq!(
+            resolve_conflict_policy(&args, &cfg_skip),
+            ConflictPolicy::Skip
+        );
     }
 
     #[test]
     fn preflight_conflicts_aborts_when_configured() {
         let mut plan = Plan::default();
-        plan.conflicts.push(std::path::PathBuf::from("/tmp/existing.mkv"));
+        plan.conflicts
+            .push(std::path::PathBuf::from("/tmp/existing.mkv"));
         assert!(preflight_conflicts(&plan, ConflictPolicy::Abort).is_err());
         assert!(preflight_conflicts(&plan, ConflictPolicy::Skip).is_ok());
         assert!(preflight_conflicts(&plan, ConflictPolicy::Overwrite).is_ok());
@@ -1038,6 +1085,14 @@ mod tests {
     }
 
     #[test]
+    fn omitted_by_filters_count_math_is_stable() {
+        let total = 10usize;
+        let emitted = 4usize;
+        let omitted = total.saturating_sub(emitted);
+        assert_eq!(omitted, 6);
+    }
+
+    #[test]
     fn preflight_destination_access_accepts_writable_temp_path() {
         let dir = tempdir().expect("create tempdir");
         let plan = Plan {
@@ -1073,7 +1128,8 @@ mod tests {
             ..Default::default()
         };
 
-        let err = preflight_destination_access(&plan).expect_err("expected parent file collision to fail");
+        let err = preflight_destination_access(&plan)
+            .expect_err("expected parent file collision to fail");
         let message = err.to_string();
         assert!(message.contains("parent path collides with existing file"));
     }

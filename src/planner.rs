@@ -249,13 +249,15 @@ fn attach_non_media(
     let mut dir_to_dest = HashMap::<PathBuf, PathBuf>::new();
     let mut video_key_to_dest = HashMap::<(PathBuf, String), PathBuf>::new();
     for op in &plan.operations {
-        if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent()) {
+        if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent())
+        {
             dir_to_dest
                 .entry(src_parent.to_path_buf())
                 .or_insert_with(|| dst_parent.to_path_buf());
 
             if let Some(stem) = lower_stem(&op.source) {
-                video_key_to_dest.insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
+                video_key_to_dest
+                    .insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
             }
         }
     }
@@ -367,7 +369,14 @@ mod tests {
         }
     }
 
-    fn parsed(path: PathBuf, file_name: &str, title: Option<&str>, year: Option<u16>, season: Option<u16>, episode: Option<u16>) -> MediaInfo {
+    fn parsed(
+        path: PathBuf,
+        file_name: &str,
+        title: Option<&str>,
+        year: Option<u16>,
+        season: Option<u16>,
+        episode: Option<u16>,
+    ) -> MediaInfo {
         MediaInfo {
             title: title.map(str::to_string),
             year,
@@ -387,13 +396,35 @@ mod tests {
         let other_path = source_parent.join("poster.jpg");
 
         let scan = ScanResult {
-            video_files: vec![scanned(video_path.clone(), "Show.S01E01.mkv", "Show.S01", ".mkv")],
-            subtitle_files: vec![scanned(subtitle_path.clone(), "Show.S01E01.srt", "Show.S01", ".srt")],
+            video_files: vec![scanned(
+                video_path.clone(),
+                "Show.S01E01.mkv",
+                "Show.S01",
+                ".mkv",
+            )],
+            subtitle_files: vec![scanned(
+                subtitle_path.clone(),
+                "Show.S01E01.srt",
+                "Show.S01",
+                ".srt",
+            )],
             audio_files: vec![],
-            other_files: vec![scanned(other_path.clone(), "poster.jpg", "Show.S01", ".jpg")],
+            other_files: vec![scanned(
+                other_path.clone(),
+                "poster.jpg",
+                "Show.S01",
+                ".jpg",
+            )],
         };
 
-        let parsed = vec![parsed(video_path, "Show.S01E01.mkv", Some("Show"), Some(2022), Some(1), Some(1))];
+        let parsed = vec![parsed(
+            video_path,
+            "Show.S01E01.mkv",
+            Some("Show"),
+            Some(2022),
+            Some(1),
+            Some(1),
+        )];
         let dest = PathBuf::from("/tmp/dest");
 
         let plan = build_show_plan(
@@ -409,7 +440,9 @@ mod tests {
 
         assert_eq!(plan.operations.len(), 3);
         assert!(plan.unparseable.is_empty());
-        assert!(plan.operations.iter().any(|op| op.destination.ends_with("Show (2022)/Season 01/Show.S01E01.mkv")));
+        assert!(plan.operations.iter().any(|op| op
+            .destination
+            .ends_with("Show (2022)/Season 01/Show.S01E01.mkv")));
         assert!(plan.operations.iter().any(|op| op.source == subtitle_path));
         assert!(plan.operations.iter().any(|op| op.source == other_path));
     }
@@ -419,13 +452,25 @@ mod tests {
         let source_parent = PathBuf::from("/tmp/source/Show.S01");
         let video_path = source_parent.join("Show.S01.only.mkv");
         let scan = ScanResult {
-            video_files: vec![scanned(video_path.clone(), "Show.S01.only.mkv", "Show.S01", ".mkv")],
+            video_files: vec![scanned(
+                video_path.clone(),
+                "Show.S01.only.mkv",
+                "Show.S01",
+                ".mkv",
+            )],
             subtitle_files: vec![],
             audio_files: vec![],
             other_files: vec![],
         };
 
-        let parsed = vec![parsed(video_path, "Show.S01.only.mkv", Some("Show"), Some(2022), Some(1), None)];
+        let parsed = vec![parsed(
+            video_path,
+            "Show.S01.only.mkv",
+            Some("Show"),
+            Some(2022),
+            Some(1),
+            None,
+        )];
         let plan = build_show_plan(
             &scan,
             &parsed,
@@ -449,13 +494,30 @@ mod tests {
         let orphan_other = PathBuf::from("/tmp/source/extras/readme.txt");
 
         let scan = ScanResult {
-            video_files: vec![scanned(video_path.clone(), "Movie.2023.mkv", "movie", ".mkv")],
+            video_files: vec![scanned(
+                video_path.clone(),
+                "Movie.2023.mkv",
+                "movie",
+                ".mkv",
+            )],
             subtitle_files: vec![scanned(subtitle_path, "Movie.2023.srt", "movie", ".srt")],
             audio_files: vec![],
-            other_files: vec![scanned(orphan_other.clone(), "readme.txt", "extras", ".txt")],
+            other_files: vec![scanned(
+                orphan_other.clone(),
+                "readme.txt",
+                "extras",
+                ".txt",
+            )],
         };
 
-        let parsed = vec![parsed(video_path, "Movie.2023.mkv", Some("Movie"), Some(2023), None, None)];
+        let parsed = vec![parsed(
+            video_path,
+            "Movie.2023.mkv",
+            Some("Movie"),
+            Some(2023),
+            None,
+            None,
+        )];
         let dest_root = PathBuf::from("/tmp/dest");
 
         let plan = build_movie_plan(
@@ -471,7 +533,10 @@ mod tests {
 
         assert_eq!(plan.operations.len(), 3);
         let fallback_dest = dest_root.join("Movie (2023)").join("readme.txt");
-        assert!(plan.operations.iter().any(|op| op.destination == fallback_dest && op.source == orphan_other));
+        assert!(plan
+            .operations
+            .iter()
+            .any(|op| op.destination == fallback_dest && op.source == orphan_other));
     }
 
     #[test]
@@ -486,14 +551,33 @@ mod tests {
                 scanned(s1_video.clone(), "Show.S01E01.mkv", "Show.Complete", ".mkv"),
                 scanned(s2_video.clone(), "Show.S02E01.mkv", "Show.Complete", ".mkv"),
             ],
-            subtitle_files: vec![scanned(s2_sub.clone(), "Show.S02E01.srt", "Show.Complete", ".srt")],
+            subtitle_files: vec![scanned(
+                s2_sub.clone(),
+                "Show.S02E01.srt",
+                "Show.Complete",
+                ".srt",
+            )],
             audio_files: vec![],
             other_files: vec![],
         };
 
         let parsed = vec![
-            parsed(s1_video, "Show.S01E01.mkv", Some("Show"), Some(2022), Some(1), Some(1)),
-            parsed(s2_video, "Show.S02E01.mkv", Some("Show"), Some(2022), Some(2), Some(1)),
+            parsed(
+                s1_video,
+                "Show.S01E01.mkv",
+                Some("Show"),
+                Some(2022),
+                Some(1),
+                Some(1),
+            ),
+            parsed(
+                s2_video,
+                "Show.S02E01.mkv",
+                Some("Show"),
+                Some(2022),
+                Some(2),
+                Some(1),
+            ),
         ];
 
         let plan = build_show_plan(
@@ -507,10 +591,10 @@ mod tests {
         )
         .expect("plan should build");
 
-        assert!(plan
-            .operations
-            .iter()
-            .any(|op| op.source == s2_sub && op.destination.ends_with("Show (2022)/Season 02/Show.S02E01.srt")));
+        assert!(plan.operations.iter().any(|op| op.source == s2_sub
+            && op
+                .destination
+                .ends_with("Show (2022)/Season 02/Show.S02E01.srt")));
     }
 
     #[test]
@@ -525,14 +609,33 @@ mod tests {
                 scanned(m1_video.clone(), "Movie.One.2021.mkv", "mixed", ".mkv"),
                 scanned(m2_video.clone(), "Movie.Two.2022.mkv", "mixed", ".mkv"),
             ],
-            subtitle_files: vec![scanned(m2_sub.clone(), "Movie.Two.2022.srt", "mixed", ".srt")],
+            subtitle_files: vec![scanned(
+                m2_sub.clone(),
+                "Movie.Two.2022.srt",
+                "mixed",
+                ".srt",
+            )],
             audio_files: vec![],
             other_files: vec![],
         };
 
         let parsed = vec![
-            parsed(m1_video, "Movie.One.2021.mkv", Some("Movie One"), Some(2021), None, None),
-            parsed(m2_video, "Movie.Two.2022.mkv", Some("Movie Two"), Some(2022), None, None),
+            parsed(
+                m1_video,
+                "Movie.One.2021.mkv",
+                Some("Movie One"),
+                Some(2021),
+                None,
+                None,
+            ),
+            parsed(
+                m2_video,
+                "Movie.Two.2022.mkv",
+                Some("Movie Two"),
+                Some(2022),
+                None,
+                None,
+            ),
         ];
 
         let plan = build_movie_plan(
@@ -546,10 +649,10 @@ mod tests {
         )
         .expect("plan should build");
 
-        assert!(plan
-            .operations
-            .iter()
-            .any(|op| op.source == m2_sub && op.destination.ends_with("Movie Two (2022)/Movie.Two.2022.srt")));
+        assert!(plan.operations.iter().any(|op| op.source == m2_sub
+            && op
+                .destination
+                .ends_with("Movie Two (2022)/Movie.Two.2022.srt")));
     }
 
     #[test]
@@ -565,11 +668,17 @@ mod tests {
             .join("Show (2022)")
             .join("Season 01")
             .join("Show.S01E01.mkv");
-        std::fs::create_dir_all(conflict_path.parent().expect("conflict parent")).expect("create conflict parent");
+        std::fs::create_dir_all(conflict_path.parent().expect("conflict parent"))
+            .expect("create conflict parent");
         std::fs::write(&conflict_path, b"existing").expect("write conflict file");
 
         let scan = ScanResult {
-            video_files: vec![scanned(video_path.clone(), "Show.S01E01.mkv", "source", ".mkv")],
+            video_files: vec![scanned(
+                video_path.clone(),
+                "Show.S01E01.mkv",
+                "source",
+                ".mkv",
+            )],
             subtitle_files: vec![],
             audio_files: vec![],
             other_files: vec![],
@@ -614,7 +723,12 @@ mod tests {
         std::fs::write(&blocked_parent, b"not a directory").expect("write blocker file");
 
         let scan = ScanResult {
-            video_files: vec![scanned(video_path.clone(), "Show.S01E01.mkv", "source", ".mkv")],
+            video_files: vec![scanned(
+                video_path.clone(),
+                "Show.S01E01.mkv",
+                "source",
+                ".mkv",
+            )],
             subtitle_files: vec![],
             audio_files: vec![],
             other_files: vec![],
@@ -641,7 +755,10 @@ mod tests {
         .expect("plan should build");
 
         assert_eq!(plan.conflict_details.len(), 1);
-        assert_eq!(plan.conflict_details[0].kind, ConflictKind::ParentPathIsFile);
+        assert_eq!(
+            plan.conflict_details[0].kind,
+            ConflictKind::ParentPathIsFile
+        );
         assert_eq!(
             plan.conflict_details[0].blocked_by.as_deref(),
             Some(blocked_parent.as_path())
