@@ -105,35 +105,7 @@ fn run_show(
         non_media_mode,
     )?;
 
-    present_plan(&plan, true, dry_run, &args.destination)?;
-
-    if dry_run {
-        return Ok(());
-    }
-
-    let conflict_policy = resolve_conflict_policy(args, config);
-    preflight_conflicts(&plan, conflict_policy)?;
-    preflight_destination_access(&plan)?;
-
-    if !yes_mode && !prompt::confirm_execute()? {
-        info!("Operation cancelled by user");
-        return Ok(());
-    }
-
-    let result = executor::execute_plan(&plan, conflict_policy == ConflictPolicy::Overwrite)?;
-    println!(
-        "Execution: {} succeeded, {} failed, {} skipped",
-        result.succeeded, result.failed, result.skipped
-    );
-    for failure in &result.failures {
-        println!("FAILED: {}", failure);
-    }
-
-    if args.clean || config.general.clean_empty_dirs {
-        scanner::clean_empty_dirs(&args.source)?;
-    }
-
-    result.into_exit_result()
+    finalize_plan(args, config, &plan, true, dry_run, yes_mode)
 }
 
 fn run_movie(
@@ -187,22 +159,33 @@ fn run_movie(
         non_media_mode,
     )?;
 
-    present_plan(&plan, false, dry_run, &args.destination)?;
+    finalize_plan(args, config, &plan, false, dry_run, yes_mode)
+}
+
+fn finalize_plan(
+    args: &cli::ShowMovieArgs,
+    config: &AppConfig,
+    plan: &Plan,
+    is_show: bool,
+    dry_run: bool,
+    yes_mode: bool,
+) -> Result<()> {
+    present_plan(plan, is_show, dry_run, &args.destination)?;
 
     if dry_run {
         return Ok(());
     }
 
     let conflict_policy = resolve_conflict_policy(args, config);
-    preflight_conflicts(&plan, conflict_policy)?;
-    preflight_destination_access(&plan)?;
+    preflight_conflicts(plan, conflict_policy)?;
+    preflight_destination_access(plan)?;
 
     if !yes_mode && !prompt::confirm_execute()? {
         info!("Operation cancelled by user");
         return Ok(());
     }
 
-    let result = executor::execute_plan(&plan, conflict_policy == ConflictPolicy::Overwrite)?;
+    let result = executor::execute_plan(plan, conflict_policy == ConflictPolicy::Overwrite)?;
     println!(
         "Execution: {} succeeded, {} failed, {} skipped",
         result.succeeded, result.failed, result.skipped
@@ -683,13 +666,21 @@ fn present_plan(plan: &Plan, is_show: bool, dry_run: bool, destination: &Path) -
 }
 
 fn truncate_middle(value: &str, max_len: usize) -> String {
-    if value.len() <= max_len || max_len < 8 {
+    let char_count = value.chars().count();
+    if char_count <= max_len || max_len < 8 {
         return value.to_string();
     }
 
     let keep = (max_len - 3) / 2;
-    let start = &value[..keep];
-    let end = &value[value.len() - keep..];
+    let start: String = value.chars().take(keep).collect();
+    let end: String = value
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{}...{}", start, end)
 }
 
@@ -901,13 +892,11 @@ fn resolve_season_episode_if_missing(info: &mut MediaInfo, yes_mode: bool) -> Re
         return Ok(());
     }
 
-    if let Some((season, episode)) = prompt::ask_for_season_episode()? {
-        if info.season.is_none() {
-            info.season = Some(season);
-        }
-        if info.episode.is_none() {
-            info.episode = Some(episode);
-        }
+    if info.season.is_none() {
+        info.season = prompt::ask_for_season()?;
+    }
+    if info.episode.is_none() {
+        info.episode = prompt::ask_for_episode()?;
     }
     Ok(())
 }
@@ -997,6 +986,14 @@ mod tests {
         let out = truncate_middle(value, 24);
         assert!(out.contains("..."));
         assert!(out.len() <= 25);
+    }
+
+    #[test]
+    fn truncate_middle_handles_utf8_without_panicking() {
+        let value = "/movies/अंदाज़-अपना-अपना/épisode-finale-東京.mkv";
+        let out = truncate_middle(value, 18);
+        assert!(out.contains("..."));
+        assert!(out.chars().count() <= 18);
     }
 
     #[test]

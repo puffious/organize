@@ -6,7 +6,7 @@ pub fn parse_movie(input: &str) -> MediaInfo {
     let normalized = tokens::normalize_name(&base);
 
     let year = extract_year_from_input(&normalized);
-    let title = extract_title(&normalized);
+    let title = tokens::extract_title(&normalized);
 
     MediaInfo {
         title,
@@ -16,21 +16,6 @@ pub fn parse_movie(input: &str) -> MediaInfo {
         extension,
         original_filename: input.to_string(),
         full_path: None,
-    }
-}
-
-fn extract_title(normalized: &str) -> Option<String> {
-    let end = tokens::title_boundary_index(normalized);
-    let candidate = if end < normalized.len() {
-        &normalized[..end]
-    } else {
-        normalized
-    };
-    let cleaned = tokens::clean_title(candidate);
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
     }
 }
 

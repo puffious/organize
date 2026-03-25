@@ -117,7 +117,7 @@ pub fn build_show_plan(
     }
 
     if let NonMediaPolicy::Keep = non_media_mode {
-        attach_non_media(scan, &mut plan, mode, &matched_dirs);
+        attach_non_media(scan, &mut plan, mode, Some(&matched_dirs), None);
     }
 
     Ok(plan)
@@ -133,8 +133,6 @@ pub fn build_movie_plan(
     non_media_mode: NonMediaPolicy,
 ) -> Result<Plan> {
     let mut plan = Plan::default();
-    let mut parent_to_folder = HashMap::<PathBuf, PathBuf>::new();
-    let mut video_key_to_folder = HashMap::<(PathBuf, String), PathBuf>::new();
     let mut default_target_folder: Option<PathBuf> = None;
 
     for info in parsed {
@@ -165,16 +163,6 @@ pub fn build_movie_plan(
         let dest = target_folder.join(&info.original_filename);
 
         record_conflict(&mut plan, &dest);
-
-        if let Some(parent) = src.parent() {
-            parent_to_folder
-                .entry(parent.to_path_buf())
-                .or_insert_with(|| target_folder.clone());
-            if let Some(stem) = lower_stem(&src) {
-                video_key_to_folder.insert((parent.to_path_buf(), stem), target_folder.clone());
-            }
-        }
-
         plan.operations.push(Operation {
             source: src,
             destination: dest,
@@ -183,58 +171,7 @@ pub fn build_movie_plan(
     }
 
     if let NonMediaPolicy::Keep = non_media_mode {
-        let fallback = default_target_folder.clone();
-        for item in scan.subtitle_files.iter().chain(scan.audio_files.iter()) {
-            if let Some(parent) = item.path.parent() {
-                let parent_buf = parent.to_path_buf();
-                if let Some(stem) = lower_stem(&item.path) {
-                    if let Some(target) = video_key_to_folder.get(&(parent_buf.clone(), stem)) {
-                        plan.operations.push(Operation {
-                            source: item.path.clone(),
-                            destination: target.join(&item.file_name),
-                            kind: mode.into(),
-                        });
-                        continue;
-                    }
-                }
-
-                if let Some(target) = parent_to_folder.get(parent) {
-                    plan.operations.push(Operation {
-                        source: item.path.clone(),
-                        destination: target.join(&item.file_name),
-                        kind: mode.into(),
-                    });
-                    continue;
-                }
-            }
-            if let Some(target) = &fallback {
-                plan.operations.push(Operation {
-                    source: item.path.clone(),
-                    destination: target.join(&item.file_name),
-                    kind: mode.into(),
-                });
-            }
-        }
-
-        for item in &scan.other_files {
-            if let Some(parent) = item.path.parent() {
-                if let Some(target) = parent_to_folder.get(parent) {
-                    plan.operations.push(Operation {
-                        source: item.path.clone(),
-                        destination: target.join(&item.file_name),
-                        kind: mode.into(),
-                    });
-                    continue;
-                }
-            }
-            if let Some(target) = &fallback {
-                plan.operations.push(Operation {
-                    source: item.path.clone(),
-                    destination: target.join(&item.file_name),
-                    kind: mode.into(),
-                });
-            }
-        }
+        attach_non_media(scan, &mut plan, mode, None, default_target_folder.as_deref());
     }
 
     Ok(plan)
@@ -244,66 +181,102 @@ fn attach_non_media(
     scan: &ScanResult,
     plan: &mut Plan,
     mode: EffectiveOperationMode,
-    matched_dirs: &HashSet<PathBuf>,
+    matched_dirs: Option<&HashSet<PathBuf>>,
+    fallback: Option<&Path>,
+) {
+    let (dir_to_dest, video_key_to_dest) = build_destination_maps(plan);
+
+    for item in scan.subtitle_files.iter().chain(scan.audio_files.iter()) {
+        if let Some(dest_parent) = resolve_dest_parent(
+            &item.path,
+            matched_dirs,
+            &dir_to_dest,
+            &video_key_to_dest,
+            fallback,
+            true,
+        ) {
+            plan.operations.push(Operation {
+                source: item.path.clone(),
+                destination: dest_parent.join(&item.file_name),
+                kind: mode.into(),
+            });
+        }
+    }
+
+    for item in &scan.other_files {
+        if let Some(dest_parent) = resolve_dest_parent(
+            &item.path,
+            matched_dirs,
+            &dir_to_dest,
+            &video_key_to_dest,
+            fallback,
+            false,
+        ) {
+            plan.operations.push(Operation {
+                source: item.path.clone(),
+                destination: dest_parent.join(&item.file_name),
+                kind: mode.into(),
+            });
+        }
+    }
+}
+
+fn build_destination_maps(
+    plan: &Plan,
+) -> (
+    HashMap<PathBuf, PathBuf>,
+    HashMap<(PathBuf, String), PathBuf>,
 ) {
     let mut dir_to_dest = HashMap::<PathBuf, PathBuf>::new();
     let mut video_key_to_dest = HashMap::<(PathBuf, String), PathBuf>::new();
+
     for op in &plan.operations {
-        if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent())
-        {
+        if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent()) {
             dir_to_dest
                 .entry(src_parent.to_path_buf())
                 .or_insert_with(|| dst_parent.to_path_buf());
 
             if let Some(stem) = lower_stem(&op.source) {
-                video_key_to_dest
-                    .insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
+                video_key_to_dest.insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
             }
         }
     }
 
-    for item in scan.subtitle_files.iter().chain(scan.audio_files.iter()) {
-        if let Some(parent) = item.path.parent() {
-            let parent_buf = parent.to_path_buf();
-            if matched_dirs.contains(&parent_buf) {
-                if let Some(stem) = lower_stem(&item.path) {
-                    if let Some(dest_parent) = video_key_to_dest.get(&(parent_buf.clone(), stem)) {
-                        plan.operations.push(Operation {
-                            source: item.path.clone(),
-                            destination: dest_parent.join(&item.file_name),
-                            kind: mode.into(),
-                        });
-                        continue;
-                    }
-                }
-
-                if let Some(dest_parent) = dir_to_dest.get(&parent_buf) {
-                    plan.operations.push(Operation {
-                        source: item.path.clone(),
-                        destination: dest_parent.join(&item.file_name),
-                        kind: mode.into(),
-                    });
-                }
-            }
-        }
-    }
-
-    for item in &scan.other_files {
-        if let Some(parent) = item.path.parent() {
-            let parent_buf = parent.to_path_buf();
-            if matched_dirs.contains(&parent_buf) {
-                if let Some(dest_parent) = dir_to_dest.get(&parent_buf) {
-                    plan.operations.push(Operation {
-                        source: item.path.clone(),
-                        destination: dest_parent.join(&item.file_name),
-                        kind: mode.into(),
-                    });
-                }
-            }
-        }
-    }
+    (dir_to_dest, video_key_to_dest)
 }
 
+fn resolve_dest_parent<'a>(
+    item_path: &Path,
+    matched_dirs: Option<&HashSet<PathBuf>>,
+    dir_to_dest: &'a HashMap<PathBuf, PathBuf>,
+    video_key_to_dest: &'a HashMap<(PathBuf, String), PathBuf>,
+    fallback: Option<&'a Path>,
+    match_by_stem: bool,
+) -> Option<&'a Path> {
+    let parent = item_path.parent()?;
+    let parent_buf = parent.to_path_buf();
+
+    let is_allowed = match matched_dirs {
+        Some(dirs) => dirs.contains(&parent_buf),
+        None => true,
+    };
+
+    if is_allowed {
+        if match_by_stem {
+            if let Some(stem) = lower_stem(item_path) {
+                if let Some(dest_parent) = video_key_to_dest.get(&(parent_buf.clone(), stem)) {
+                    return Some(dest_parent.as_path());
+                }
+            }
+        }
+
+        if let Some(dest_parent) = dir_to_dest.get(&parent_buf) {
+            return Some(dest_parent.as_path());
+        }
+    }
+
+    fallback
+}
 fn lower_stem(path: &Path) -> Option<String> {
     path.file_stem()
         .map(|s| s.to_string_lossy().to_ascii_lowercase())

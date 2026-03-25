@@ -30,20 +30,25 @@ pub fn ask_for_year(title: Option<&str>) -> Result<Option<u16>> {
     Ok(text.trim().parse::<u16>().ok())
 }
 
-pub fn ask_for_season_episode() -> Result<Option<(u16, u16)>> {
+pub fn ask_for_season() -> Result<Option<u16>> {
     let season: String = Input::new()
         .allow_empty(true)
         .with_prompt("Season number")
         .interact_text()?;
+    if season.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(season.trim().parse::<u16>().ok())
+}
+
+pub fn ask_for_episode() -> Result<Option<u16>> {
     let episode: String = Input::new()
         .allow_empty(true)
         .with_prompt("Episode number")
         .interact_text()?;
-
-    let s = season.trim().parse::<u16>().ok();
-    let e = episode.trim().parse::<u16>().ok();
-    Ok(match (s, e) {
-        (Some(s), Some(e)) => Some((s, e)),
-        _ => None,
-    })
+    if episode.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(episode.trim().parse::<u16>().ok())
 }
+
