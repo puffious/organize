@@ -9,10 +9,20 @@ pub fn confirm_execute() -> Result<bool> {
     Ok(answer)
 }
 
-pub fn ask_for_year() -> Result<Option<u16>> {
+pub fn ask_for_year(title: Option<&str>) -> Result<Option<u16>> {
+    let prompt = match title {
+        Some(t) if !t.trim().is_empty() => {
+            format!(
+                "Year not found for \"{}\". Enter year (or leave blank to skip)",
+                t
+            )
+        }
+        _ => "Year not found. Enter year (or leave blank to skip)".to_string(),
+    };
+
     let text: String = Input::new()
         .allow_empty(true)
-        .with_prompt("Year not found. Enter year (or leave blank to skip)")
+        .with_prompt(prompt)
         .interact_text()?;
     if text.trim().is_empty() {
         return Ok(None);

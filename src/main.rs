@@ -16,7 +16,7 @@ use parser::{parse_movie, parse_show, MediaInfo};
 use planner::{build_movie_plan, build_show_plan, ConflictKind, Plan};
 use scanner::scan_source;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use tmdb::MetadataLookup;
@@ -80,21 +80,20 @@ fn run_show(
             item.season = Some(0);
         }
 
-        if item.year.is_none() {
-            item.year = resolve_year(
-                item.title.as_deref(),
-                MediaType::Show,
-                yes_mode,
-                &tmdb_client,
-            )?;
-        }
-
         if item.season.is_none() || item.episode.is_none() {
             resolve_season_episode_if_missing(&mut item, yes_mode)?;
         }
 
         parsed.push(item);
     }
+
+    resolve_missing_years(
+        &mut parsed,
+        args.year,
+        MediaType::Show,
+        yes_mode,
+        &tmdb_client,
+    )?;
 
     let plan = build_show_plan(
         &scan,
@@ -106,7 +105,7 @@ fn run_show(
         non_media_mode,
     )?;
 
-    present_plan(&plan, true, dry_run, &args.source, &args.destination)?;
+    present_plan(&plan, true, dry_run, &args.destination)?;
 
     if dry_run {
         return Ok(());
@@ -167,16 +166,16 @@ fn run_movie(
         if item.year.is_none() {
             item.year = parser::extract_year_from_input(&f.parent_name);
         }
-        if item.year.is_none() {
-            item.year = resolve_year(
-                item.title.as_deref(),
-                MediaType::Movie,
-                yes_mode,
-                &tmdb_client,
-            )?;
-        }
         parsed.push(item);
     }
+
+    resolve_missing_years(
+        &mut parsed,
+        args.year,
+        MediaType::Movie,
+        yes_mode,
+        &tmdb_client,
+    )?;
 
     let plan = build_movie_plan(
         &scan,
@@ -188,7 +187,7 @@ fn run_movie(
         non_media_mode,
     )?;
 
-    present_plan(&plan, false, dry_run, &args.source, &args.destination)?;
+    present_plan(&plan, false, dry_run, &args.destination)?;
 
     if dry_run {
         return Ok(());
@@ -563,33 +562,57 @@ fn detected_kind(info: &MediaInfo) -> &'static str {
     }
 }
 
-fn present_plan(
-    plan: &Plan,
-    is_show: bool,
-    dry_run: bool,
-    source: &Path,
-    destination: &Path,
-) -> Result<()> {
+fn present_plan(plan: &Plan, is_show: bool, dry_run: bool, destination: &Path) -> Result<()> {
+    let collection_name = infer_collection_name(plan, destination);
+
     if dry_run {
-        println!(
-            "[DRY RUN] Organizing {}",
-            if is_show { "show" } else { "movie" }
-        );
-        println!("Source: {}", source.display());
-        println!("Destination: {}", destination.display());
+        if let Some(name) = collection_name {
+            println!(
+                "[DRY RUN] Organizing {}: {}",
+                if is_show { "show" } else { "movie" },
+                name
+            );
+        } else {
+            println!(
+                "[DRY RUN] Organizing {}",
+                if is_show { "show" } else { "movie" }
+            );
+        }
         println!();
     }
 
     let conflicts: HashSet<_> = plan.conflicts.iter().collect();
+    let mut grouped = BTreeMap::<String, Vec<(String, bool)>>::new();
     for op in &plan.operations {
-        let marker = if conflicts.contains(&op.destination) {
-            "[CONFLICT]"
-        } else {
-            "[OK]"
-        };
-        let src = truncate_middle(&op.source.display().to_string(), 56);
-        let dst = truncate_middle(&op.destination.display().to_string(), 56);
-        println!("  {} {} -> {}", marker, src, dst);
+        let relative = op
+            .destination
+            .strip_prefix(destination)
+            .map(|path| path.to_path_buf())
+            .unwrap_or_else(|_| op.destination.clone());
+
+        let group = relative
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| ".".to_string());
+        let file_name = relative
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| relative.display().to_string());
+
+        grouped
+            .entry(group)
+            .or_default()
+            .push((file_name, conflicts.contains(&op.destination)));
+    }
+
+    println!("Destination Preview:");
+    for (group, files) in grouped.iter_mut() {
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        println!("  {}/", truncate_middle(group, 120));
+        for (file_name, conflict) in files {
+            let marker = if *conflict { "[CONFLICT]" } else { "[OK]" };
+            println!("    {} {}", marker, truncate_middle(file_name, 96));
+        }
     }
 
     if !plan.conflicts.is_empty() {
@@ -787,7 +810,7 @@ fn resolve_year(
     };
 
     if !yes_mode {
-        if let Some(year) = prompt::ask_for_year()? {
+        if let Some(year) = prompt::ask_for_year(Some(title))? {
             return Ok(Some(year));
         }
     }
@@ -799,6 +822,74 @@ fn resolve_year(
             Ok(None)
         }
     }
+}
+
+fn resolve_missing_years(
+    parsed: &mut [MediaInfo],
+    forced_year: Option<u16>,
+    media_type: MediaType,
+    yes_mode: bool,
+    lookup: &impl MetadataLookup,
+) -> Result<()> {
+    if let Some(year) = forced_year {
+        for item in parsed.iter_mut() {
+            if item.year.is_none() {
+                item.year = Some(year);
+            }
+        }
+        return Ok(());
+    }
+
+    let mut per_title_year = HashMap::<String, Option<u16>>::new();
+    for item in parsed.iter() {
+        if item.year.is_some() {
+            continue;
+        }
+        if let Some(title) = item.title.as_ref() {
+            per_title_year.entry(title.clone()).or_insert(None);
+        }
+    }
+
+    if per_title_year.is_empty() {
+        return Ok(());
+    }
+
+    if !yes_mode {
+        for (title, year) in per_title_year.iter_mut() {
+            if year.is_none() {
+                *year = prompt::ask_for_year(Some(title))?;
+            }
+        }
+    }
+
+    for (title, year) in per_title_year.iter_mut() {
+        if year.is_some() {
+            continue;
+        }
+        *year = resolve_year(Some(title), media_type, true, lookup)?;
+    }
+
+    for item in parsed.iter_mut() {
+        if item.year.is_some() {
+            continue;
+        }
+        if let Some(title) = item.title.as_ref() {
+            if let Some(year) = per_title_year.get(title).copied().flatten() {
+                item.year = Some(year);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn infer_collection_name(plan: &Plan, destination: &Path) -> Option<String> {
+    let first = plan.operations.first()?;
+    let relative = first.destination.strip_prefix(destination).ok()?;
+    relative
+        .components()
+        .next()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
 }
 
 fn resolve_season_episode_if_missing(info: &mut MediaInfo, yes_mode: bool) -> Result<()> {
@@ -831,18 +922,22 @@ fn is_extras_folder(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        confidence_arg_to_rank, confidence_rank, detected_kind, is_read_only_dir, parse_confidence,
-        preflight_conflicts, preflight_destination_access, resolve_conflict_policy,
-        should_include_scan_item, summarize_scan, to_json_scan_item, truncate_middle,
-        ConflictPolicy,
+        confidence_arg_to_rank, confidence_rank, detected_kind, infer_collection_name,
+        is_read_only_dir, parse_confidence, preflight_conflicts, preflight_destination_access,
+        resolve_conflict_policy, resolve_missing_years, should_include_scan_item, summarize_scan,
+        to_json_scan_item, truncate_middle, ConflictPolicy,
     };
     use crate::config::{AppConfig, ConflictMode};
     use crate::parser::MediaInfo;
-    use crate::planner::Plan;
+    use crate::planner::{Operation, OperationKind, Plan};
     use crate::tmdb::MetadataLookup;
     use tempfile::tempdir;
 
     struct FailingLookup;
+
+    struct FixedLookup {
+        year: Option<u16>,
+    }
 
     impl MetadataLookup for FailingLookup {
         fn lookup_year(
@@ -851,6 +946,16 @@ mod tests {
             _media_type: crate::config::MediaType,
         ) -> anyhow::Result<Option<u16>> {
             anyhow::bail!("network unavailable")
+        }
+    }
+
+    impl MetadataLookup for FixedLookup {
+        fn lookup_year(
+            &self,
+            _title: &str,
+            _media_type: crate::config::MediaType,
+        ) -> anyhow::Result<Option<u16>> {
+            Ok(self.year)
         }
     }
 
@@ -892,6 +997,79 @@ mod tests {
         let out = truncate_middle(value, 24);
         assert!(out.contains("..."));
         assert!(out.len() <= 25);
+    }
+
+    #[test]
+    fn resolve_missing_years_applies_forced_year_to_all_missing() {
+        let mut items = vec![
+            MediaInfo {
+                title: Some("Game Changer".to_string()),
+                year: None,
+                ..Default::default()
+            },
+            MediaInfo {
+                title: Some("Game Changer".to_string()),
+                year: Some(2018),
+                ..Default::default()
+            },
+        ];
+
+        resolve_missing_years(
+            &mut items,
+            Some(2019),
+            crate::config::MediaType::Show,
+            true,
+            &FailingLookup,
+        )
+        .expect("forced year should resolve without lookup");
+
+        assert_eq!(items[0].year, Some(2019));
+        assert_eq!(items[1].year, Some(2018));
+    }
+
+    #[test]
+    fn resolve_missing_years_uses_lookup_when_unresolved() {
+        let mut items = vec![
+            MediaInfo {
+                title: Some("Game Changer".to_string()),
+                year: None,
+                ..Default::default()
+            },
+            MediaInfo {
+                title: Some("Game Changer".to_string()),
+                year: None,
+                ..Default::default()
+            },
+        ];
+
+        resolve_missing_years(
+            &mut items,
+            None,
+            crate::config::MediaType::Show,
+            true,
+            &FixedLookup { year: Some(2019) },
+        )
+        .expect("lookup should resolve shared title year");
+
+        assert_eq!(items[0].year, Some(2019));
+        assert_eq!(items[1].year, Some(2019));
+    }
+
+    #[test]
+    fn infer_collection_name_uses_first_destination_component() {
+        let destination = std::path::PathBuf::from("/library/shows");
+        let mut plan = Plan::default();
+        plan.operations.push(Operation {
+            source: std::path::PathBuf::from("/downloads/Game.Changer.S01E01.mkv"),
+            destination: destination
+                .join("Game Changer (2019)")
+                .join("Season 01")
+                .join("Game.Changer.S01E01.mkv"),
+            kind: OperationKind::Move,
+        });
+
+        let folder = infer_collection_name(&plan, &destination);
+        assert_eq!(folder.as_deref(), Some("Game Changer (2019)"));
     }
 
     #[test]
