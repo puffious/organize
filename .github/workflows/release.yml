@@ -149,4 +149,4 @@ jobs:
             exit 1
           fi
 
-          gh release upload "${{ steps.vars.outputs.tag }}" "${files[@]}" --clobber
+          gh release upload "${{ steps.vars.outputs.tag }}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
