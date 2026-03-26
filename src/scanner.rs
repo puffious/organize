@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::config::MediaExtensions;
@@ -34,12 +35,23 @@ pub fn scan_source(source: &Path, exts: &MediaExtensions) -> Result<ScanResult> 
 
     let mut out = ScanResult::default();
 
-    for entry in WalkDir::new(source)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
-    {
+    for entry in WalkDir::new(source).follow_links(false) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                warn!(
+                    "skipping unreadable path under {}: {}",
+                    source.display(),
+                    err
+                );
+                continue;
+            }
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
         let path = entry.path().to_path_buf();
         let file_name = entry.file_name().to_string_lossy().to_string();
         let parent_name = entry
@@ -83,13 +95,24 @@ pub fn scan_source(source: &Path, exts: &MediaExtensions) -> Result<ScanResult> 
 }
 
 pub fn clean_empty_dirs(source: &Path) -> Result<()> {
-    let mut dirs = WalkDir::new(source)
-        .contents_first(true)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_dir())
-        .map(|e| e.path().to_path_buf())
-        .collect::<Vec<_>>();
+    let mut dirs = Vec::new();
+    for entry in WalkDir::new(source).contents_first(true) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                warn!(
+                    "skipping unreadable path while cleaning under {}: {}",
+                    source.display(),
+                    err
+                );
+                continue;
+            }
+        };
+
+        if entry.file_type().is_dir() {
+            dirs.push(entry.path().to_path_buf());
+        }
+    }
 
     dirs.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     for dir in dirs {
@@ -98,7 +121,13 @@ pub fn clean_empty_dirs(source: &Path) -> Result<()> {
             .next()
             .is_none();
         if is_empty {
-            let _ = std::fs::remove_dir(&dir);
+            if let Err(err) = std::fs::remove_dir(&dir) {
+                warn!(
+                    "failed to remove empty directory {}: {}",
+                    dir.display(),
+                    err
+                );
+            }
         }
     }
     Ok(())

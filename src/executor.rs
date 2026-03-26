@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{io::ErrorKind, path::Path};
 
 use anyhow::{Context, Result};
 use tracing::warn;
@@ -96,8 +96,12 @@ fn execute_operation(op: &Operation) -> Result<()> {
                         op.destination.display()
                     )
                 })?;
+                Ok(())
             }
-            Ok(())
+            #[cfg(not(unix))]
+            {
+                anyhow::bail!("symlink operations are only supported on unix platforms")
+            }
         }
     }
 }
@@ -105,7 +109,7 @@ fn execute_operation(op: &Operation) -> Result<()> {
 fn execute_move(op: &Operation) -> Result<()> {
     match std::fs::rename(&op.source, &op.destination) {
         Ok(_) => Ok(()),
-        Err(_) => {
+        Err(err) if err.kind() == ErrorKind::CrossesDevices => {
             std::fs::copy(&op.source, &op.destination).with_context(|| {
                 format!(
                     "cross-device fallback copy {} -> {} failed",
@@ -118,6 +122,13 @@ fn execute_move(op: &Operation) -> Result<()> {
             })?;
             Ok(())
         }
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "move {} -> {} failed",
+                op.source.display(),
+                op.destination.display()
+            )
+        }),
     }
 }
 

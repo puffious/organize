@@ -3,6 +3,12 @@ run-name: release ${{ github.event.release.tag_name || inputs.tag || github.ref_
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  REGISTRY: ghcr.io
+  CONTAINER_PLATFORMS: linux/amd64,linux/arm64
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 on:
   release:
@@ -117,6 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
 
     steps:
       - name: Determine release tag
@@ -124,12 +131,19 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.tag }}"
           elif [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+            tag="${{ github.event.release.tag_name }}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF_NAME}"
           fi
+
+          version="${tag#v}"
+          lower_repo="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${lower_repo}" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts
         uses: actions/download-artifact@v5
@@ -150,3 +164,76 @@ jobs:
           fi
 
           gh release upload "${{ steps.vars.outputs.tag }}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
+
+      - name: Check out source for container build
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.vars.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.vars.outputs.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.vars.outputs.tag }}
+            type=raw,value=${{ steps.vars.outputs.version }}
+
+      - name: Build and publish container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: ${{ env.CONTAINER_PLATFORMS }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload publish summary
+        shell: bash
+        run: |
+          {
+            echo "## Container image"
+            echo
+            echo "- Registry: \`${{ env.REGISTRY }}\`"
+            echo "- Image: \`${{ steps.vars.outputs.image }}\`"
+            echo "- Platforms: \`${{ env.CONTAINER_PLATFORMS }}\`"
+            echo "- Tags:"
+            printf '%s\n' "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+              [[ -n "$tag" ]] && echo "  - \`$tag\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Append container image link to release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          current_notes="$(gh release view "${{ steps.vars.outputs.tag }}" --repo "${GITHUB_REPOSITORY}" --json body --jq '.body')"
+          container_block=$(cat <<'EOF'
+
+          ## Container image
+
+          - Pull: `${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.version }}`
+          - Platforms: `${{ env.CONTAINER_PLATFORMS }}`
+          EOF
+          )
+          if [[ "$current_notes" == *"## Container image"* ]]; then
+            echo "Release notes already mention container image"
+            exit 0
+          fi
+          gh release edit "${{ steps.vars.outputs.tag }}" \
+            --notes "${current_notes}${container_block}" \
+            --repo "${GITHUB_REPOSITORY}"

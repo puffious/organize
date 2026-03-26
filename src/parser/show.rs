@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::sync::LazyLock;
 
 use super::{extract_year_from_input, tokens, MediaInfo};
 
@@ -9,7 +10,7 @@ pub fn parse_show(input: &str) -> MediaInfo {
 
     let (season, episode) = extract_season_episode(&normalized);
     let year = extract_year_from_input(&normalized);
-    let title = extract_title(&normalized);
+    let title = tokens::extract_title(&normalized);
 
     MediaInfo {
         title,
@@ -22,58 +23,73 @@ pub fn parse_show(input: &str) -> MediaInfo {
     }
 }
 
-fn extract_title(normalized: &str) -> Option<String> {
-    let end = tokens::title_boundary_index(normalized);
-    let candidate = if end < normalized.len() {
-        &normalized[..end]
-    } else {
-        normalized
-    };
-
-    let cleaned = tokens::clean_title(candidate);
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
-    }
-}
+static PATTERN_MULTI: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})(?:E\d{1,3})+").expect("valid regex"));
+static PATTERN_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})-E(\d{1,3})").expect("valid regex"));
+static PATTERN_SE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})").expect("valid regex"));
+static PATTERN_X: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(\d{1,2})x(\d{1,3})\b").expect("valid regex"));
+static PATTERN_SEASON_EPISODE_WORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)Season\s*(\d{1,2})\s*Episode\s*(\d{1,3})").expect("valid regex")
+});
+static PATTERN_SEASON_ONLY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"));
+static PATTERN_SEASON_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"));
+static PATTERN_EP_ONLY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bE(\d{1,3})\b").expect("valid regex"));
+static PATTERN_EPISODE_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Episode\s*(\d{1,3})").expect("valid regex"));
 
 fn extract_season_episode(normalized: &str) -> (Option<u16>, Option<u16>) {
-    let multi = Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})(?:E\d{1,3})+").expect("valid regex");
-    if let Some(c) = multi.captures(normalized) {
+    if let Some(c) = PATTERN_MULTI.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, e);
     }
 
-    let range = Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})-E(\d{1,3})").expect("valid regex");
-    if let Some(c) = range.captures(normalized) {
+    if let Some(c) = PATTERN_RANGE.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, e);
     }
 
-    let se = Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})").expect("valid regex");
-    if let Some(c) = se.captures(normalized) {
+    if let Some(c) = PATTERN_SE.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, e);
     }
 
-    let season_only = Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex");
-    if let Some(c) = season_only.captures(normalized) {
+    if let Some(c) = PATTERN_X.captures(normalized) {
+        let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
+        let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
+        return (s, e);
+    }
+
+    if let Some(c) = PATTERN_SEASON_EPISODE_WORD.captures(normalized) {
+        let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
+        let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
+        return (s, e);
+    }
+
+    if let Some(c) = PATTERN_SEASON_ONLY.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, None);
     }
 
-    let season_word = Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex");
-    if let Some(c) = season_word.captures(normalized) {
+    if let Some(c) = PATTERN_SEASON_WORD.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, None);
     }
 
-    let ep_only = Regex::new(r"(?i)\bE(\d{1,3})\b").expect("valid regex");
-    if let Some(c) = ep_only.captures(normalized) {
+    if let Some(c) = PATTERN_EP_ONLY.captures(normalized) {
+        let e = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
+        return (None, e);
+    }
+
+    if let Some(c) = PATTERN_EPISODE_WORD.captures(normalized) {
         let e = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         return (None, e);
     }
@@ -166,5 +182,21 @@ mod tests {
         assert_eq!(info.title.as_deref(), Some("Black Mirror"));
         assert_eq!(info.year, Some(2011));
         assert_eq!(info.season, Some(4));
+    }
+
+    #[test]
+    fn parses_x_episode_pattern() {
+        let info = parse_show("Show.Name.1x03.1080p.WEB-DL.mkv");
+        assert_eq!(info.title.as_deref(), Some("Show Name"));
+        assert_eq!(info.season, Some(1));
+        assert_eq!(info.episode, Some(3));
+    }
+
+    #[test]
+    fn parses_season_episode_words() {
+        let info = parse_show("Show Name Season 2 Episode 5 1080p.mkv");
+        assert_eq!(info.title.as_deref(), Some("Show Name"));
+        assert_eq!(info.season, Some(2));
+        assert_eq!(info.episode, Some(5));
     }
 }

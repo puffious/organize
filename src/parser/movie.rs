@@ -6,7 +6,7 @@ pub fn parse_movie(input: &str) -> MediaInfo {
     let normalized = tokens::normalize_name(&base);
 
     let year = extract_year_from_input(&normalized);
-    let title = extract_title(&normalized);
+    let title = tokens::extract_title(&normalized);
 
     MediaInfo {
         title,
@@ -16,21 +16,6 @@ pub fn parse_movie(input: &str) -> MediaInfo {
         extension,
         original_filename: input.to_string(),
         full_path: None,
-    }
-}
-
-fn extract_title(normalized: &str) -> Option<String> {
-    let end = tokens::title_boundary_index(normalized);
-    let candidate = if end < normalized.len() {
-        &normalized[..end]
-    } else {
-        normalized
-    };
-    let cleaned = tokens::clean_title(candidate);
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
     }
 }
 
@@ -58,5 +43,19 @@ mod tests {
     fn parses_breaking_bad_like_as_movie_for_shared_parser_case() {
         let info = parse_movie("Breaking.Bad.S01E01.Pilot.1080p.BluRay.x265.HEVC.10bit-CAKES.mkv");
         assert_eq!(info.title.as_deref(), Some("Breaking Bad"));
+    }
+
+    #[test]
+    fn parses_bracket_heavy_movie_release() {
+        let info = parse_movie("Movie.Title.[2023].[1080p].[WEB-DL].[x265].mkv");
+        assert_eq!(info.title.as_deref(), Some("Movie Title"));
+        assert_eq!(info.year, Some(2023));
+    }
+
+    #[test]
+    fn parses_remux_movie_release() {
+        let info = parse_movie("Movie Title (2021) [4K Remux HEVC TrueHD].mkv");
+        assert_eq!(info.title.as_deref(), Some("Movie Title"));
+        assert_eq!(info.year, Some(2021));
     }
 }

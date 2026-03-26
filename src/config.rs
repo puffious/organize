@@ -11,8 +11,10 @@ pub enum MediaType {
     Movie,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum EffectiveOperationMode {
+    #[default]
     Move,
     Copy,
     HardLink,
@@ -30,20 +32,55 @@ impl EffectiveOperationMode {
         if args.symlink {
             return Self::SymLink;
         }
-        match config.general.default_mode.as_str() {
-            "copy" => Self::Copy,
-            "hardlink" => Self::HardLink,
-            "symlink" => Self::SymLink,
-            _ => Self::Move,
+        config.general.default_mode
+    }
+}
+
+fn normalize_extensions(values: &mut [String]) {
+    for value in values {
+        *value = value.trim().to_ascii_lowercase();
+        if !value.is_empty() && !value.starts_with('.') {
+            value.insert(0, '.');
         }
     }
+}
+
+fn normalize_api_key(value: &mut String) {
+    *value = value.trim().to_string();
+}
+
+fn normalize_log_file(value: &mut Option<PathBuf>) {
+    if value
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        *value = None;
+    }
+}
+
+fn deserialize_optional_mode<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<EffectiveOperationMode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| match value.trim().to_ascii_lowercase().as_str() {
+        "move" => Ok(EffectiveOperationMode::Move),
+        "copy" => Ok(EffectiveOperationMode::Copy),
+        "hardlink" => Ok(EffectiveOperationMode::HardLink),
+        "symlink" => Ok(EffectiveOperationMode::SymLink),
+        other => Err(serde::de::Error::custom(format!(
+            "invalid default_mode '{other}', expected one of: move, copy, hardlink, symlink"
+        ))),
+    })
+    .transpose()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
     pub tmdb: TmdbConfig,
-    pub naming: NamingConfig,
     pub media_extensions: MediaExtensions,
     pub non_media: NonMediaConfig,
 }
@@ -77,6 +114,8 @@ impl AppConfig {
             cfg.general.auto_confirm = true;
         }
 
+        normalize_log_file(&mut cfg.general.log_file);
+
         match &cli.command {
             Commands::Show(args) | Commands::Movie(args) => {
                 if args.clean {
@@ -92,12 +131,18 @@ impl AppConfig {
                     cfg.general.auto_confirm = true;
                 }
             }
-            Commands::Scan(_) => {}
+            Commands::Scan(_) | Commands::Doctor(_) => {}
         }
+
+        normalize_api_key(&mut cfg.tmdb.api_key);
+        normalize_extensions(&mut cfg.media_extensions.video);
+        normalize_extensions(&mut cfg.media_extensions.subtitle);
+        normalize_extensions(&mut cfg.media_extensions.audio);
 
         if cfg.tmdb.api_key.is_empty() {
             if let Ok(env_key) = std::env::var("TMDB_API_KEY") {
                 cfg.tmdb.api_key = env_key;
+                normalize_api_key(&mut cfg.tmdb.api_key);
             }
         }
 
@@ -111,9 +156,6 @@ impl AppConfig {
         if let Some(t) = incoming.tmdb {
             self.tmdb.merge(t);
         }
-        if let Some(n) = incoming.naming {
-            self.naming.merge(n);
-        }
         if let Some(m) = incoming.media_extensions {
             self.media_extensions.merge(m);
         }
@@ -125,7 +167,7 @@ impl AppConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
-    pub default_mode: String,
+    pub default_mode: EffectiveOperationMode,
     pub auto_confirm: bool,
     pub clean_empty_dirs: bool,
     pub conflict_mode: ConflictMode,
@@ -135,7 +177,7 @@ pub struct GeneralConfig {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            default_mode: "move".to_string(),
+            default_mode: EffectiveOperationMode::Move,
             auto_confirm: false,
             clean_empty_dirs: false,
             conflict_mode: ConflictMode::Skip,
@@ -159,7 +201,8 @@ impl GeneralConfig {
             self.conflict_mode = v;
         }
         if let Some(v) = incoming.log_file {
-            self.log_file = if v.is_empty() { None } else { Some(v.into()) };
+            self.log_file = Some(v.into());
+            normalize_log_file(&mut self.log_file);
         }
     }
 }
@@ -179,39 +222,9 @@ pub struct TmdbConfig {
 
 impl TmdbConfig {
     fn merge(&mut self, incoming: PartialTmdbConfig) {
-        if let Some(v) = incoming.api_key {
+        if let Some(mut v) = incoming.api_key {
+            normalize_api_key(&mut v);
             self.api_key = v;
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NamingConfig {
-    pub show_folder: String,
-    pub season_folder: String,
-    pub movie_folder: String,
-}
-
-impl Default for NamingConfig {
-    fn default() -> Self {
-        Self {
-            show_folder: "{Series Title} ({Series Year})".to_string(),
-            season_folder: "Season {Season:00}".to_string(),
-            movie_folder: "{Movie Title} ({Movie Year})".to_string(),
-        }
-    }
-}
-
-impl NamingConfig {
-    fn merge(&mut self, incoming: PartialNamingConfig) {
-        if let Some(v) = incoming.show_folder {
-            self.show_folder = v;
-        }
-        if let Some(v) = incoming.season_folder {
-            self.season_folder = v;
-        }
-        if let Some(v) = incoming.movie_folder {
-            self.movie_folder = v;
         }
     }
 }
@@ -251,13 +264,16 @@ impl Default for MediaExtensions {
 
 impl MediaExtensions {
     fn merge(&mut self, incoming: PartialMediaExtensions) {
-        if let Some(v) = incoming.video {
+        if let Some(mut v) = incoming.video {
+            normalize_extensions(&mut v);
             self.video = v;
         }
-        if let Some(v) = incoming.subtitle {
+        if let Some(mut v) = incoming.subtitle {
+            normalize_extensions(&mut v);
             self.subtitle = v;
         }
-        if let Some(v) = incoming.audio {
+        if let Some(mut v) = incoming.audio {
+            normalize_extensions(&mut v);
             self.audio = v;
         }
     }
@@ -304,30 +320,24 @@ impl NonMediaConfig {
 struct PartialConfig {
     general: Option<PartialGeneralConfig>,
     tmdb: Option<PartialTmdbConfig>,
-    naming: Option<PartialNamingConfig>,
     media_extensions: Option<PartialMediaExtensions>,
     non_media: Option<PartialNonMediaConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PartialGeneralConfig {
-    default_mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_mode")]
+    default_mode: Option<EffectiveOperationMode>,
     auto_confirm: Option<bool>,
     clean_empty_dirs: Option<bool>,
     conflict_mode: Option<ConflictMode>,
+    #[serde(default)]
     log_file: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PartialTmdbConfig {
     api_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PartialNamingConfig {
-    show_folder: Option<String>,
-    season_folder: Option<String>,
-    movie_folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,13 +360,18 @@ fn load_file(path: &PathBuf) -> Result<PartialConfig> {
     Ok(parsed)
 }
 
-fn global_config_path() -> Option<PathBuf> {
+pub fn global_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("organize").join("config.toml"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConflictMode, GeneralConfig, PartialGeneralConfig};
+    use super::{
+        load_file, ConflictMode, EffectiveOperationMode, GeneralConfig, MediaExtensions,
+        PartialGeneralConfig,
+    };
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn general_merge_applies_conflict_mode_override() {
@@ -377,7 +392,7 @@ mod tests {
     #[test]
     fn general_merge_ignores_absent_fields() {
         let mut general = GeneralConfig {
-            default_mode: "copy".to_string(),
+            default_mode: EffectiveOperationMode::Copy,
             auto_confirm: true,
             ..Default::default()
         };
@@ -390,8 +405,30 @@ mod tests {
             log_file: None,
         });
 
-        assert_eq!(general.default_mode, "copy");
+        assert_eq!(general.default_mode, EffectiveOperationMode::Copy);
         assert!(general.auto_confirm);
         assert_eq!(general.conflict_mode, ConflictMode::Skip);
+    }
+
+    #[test]
+    fn media_extensions_merge_normalizes_values() {
+        let mut exts = MediaExtensions::default();
+        exts.merge(super::PartialMediaExtensions {
+            video: Some(vec![" MKV ".to_string(), "mp4".to_string()]),
+            subtitle: None,
+            audio: Some(vec![" FlAc ".to_string()]),
+        });
+
+        assert_eq!(exts.video, vec![".mkv", ".mp4"]);
+        assert_eq!(exts.audio, vec![".flac"]);
+    }
+
+    #[test]
+    fn load_file_rejects_invalid_default_mode() {
+        let dir = tempdir().expect("create tempdir");
+        let path = dir.path().join("invalid.toml");
+        fs::write(&path, "[general]\ndefault_mode = \"teleport\"\n").expect("write invalid config");
+
+        load_file(&path).expect_err("invalid default_mode should fail parsing");
     }
 }

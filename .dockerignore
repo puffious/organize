@@ -1,0 +1,16 @@
+target
+.git
+.claude
+docs
+*.zip
+*.log
+.DS_Store
+.env
+.vscode
+.idea
+coverage
+node_modules
+*.tar
+*.tmp
+*.swp
+docker-compose*.yml

@@ -1,6 +1,7 @@
 use std::fs;
 
 use assert_cmd::Command;
+use predicates::str::contains;
 use tempfile::tempdir;
 
 #[test]
@@ -59,8 +60,12 @@ fn scan_json_output_writes_report_file() {
     let source = workspace.path().join("scan_source");
     let report = workspace.path().join("reports/scan.json");
 
-    fs::create_dir_all(&source).expect("create source dir");
-    fs::write(source.join("Show.Name.S01E01.mkv"), b"video").expect("write test media");
+    fs::create_dir_all(source.join("Show.Name.Season.01")).expect("create source dir");
+    fs::write(
+        source.join("Show.Name.Season.01").join("Episode.02.mkv"),
+        b"video",
+    )
+    .expect("write test media");
 
     let mut cmd = Command::cargo_bin("organize").expect("binary available");
     cmd.arg("scan")
@@ -81,6 +86,105 @@ fn scan_json_output_writes_report_file() {
     assert_eq!(parsed["items"].as_array().map(|v| v.len()), Some(1));
     assert!(parsed["items"][0]["source_path"].is_string());
     assert!(parsed["items"][0]["extension"].is_string());
+    assert_eq!(parsed["items"][0]["title_source"].as_str(), Some("parent"));
+    assert_eq!(
+        parsed["items"][0]["season_source"].as_str(),
+        Some("missing")
+    );
+    assert_eq!(parsed["items"][0]["parser_mode"].as_str(), Some("auto"));
+    assert_eq!(parsed["items"][0]["detected_kind"].as_str(), Some("show"));
+    assert!(parsed["diagnostics_summary"]["fallback_summary"]["title"].as_u64() >= Some(1));
+    assert_eq!(
+        parsed["diagnostics_summary"]["fallback_summary"]["season"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
+        parsed["items"][0]["issues"][0].as_str(),
+        Some("missing_year")
+    );
+    assert_eq!(
+        parsed["items"][0]["issues"][1].as_str(),
+        Some("missing_season")
+    );
+}
+
+#[test]
+fn doctor_json_output_writes_report_file() {
+    let workspace = tempdir().expect("create tempdir");
+    let source = workspace.path().join("doctor_source");
+    let destination = workspace.path().join("doctor_dest");
+    let report = workspace.path().join("reports/doctor.json");
+
+    fs::create_dir_all(&source).expect("create source dir");
+    fs::create_dir_all(&destination).expect("create destination dir");
+
+    let mut cmd = Command::cargo_bin("organize").expect("binary available");
+    cmd.arg("doctor")
+        .arg("--json")
+        .arg("--output")
+        .arg(&report)
+        .arg("--source")
+        .arg(&source)
+        .arg("--destination")
+        .arg(&destination)
+        .assert()
+        .success();
+
+    let payload = fs::read_to_string(&report).expect("read doctor report");
+    let parsed: serde_json::Value = serde_json::from_str(&payload).expect("valid doctor json");
+
+    assert!(parsed["config_path"].is_string() || parsed["config_path"].is_null());
+    assert!(parsed["tmdb_api_key_present"].is_boolean());
+    assert!(parsed["checks"].is_array());
+    assert!(parsed["checks"]
+        .as_array()
+        .expect("checks array")
+        .iter()
+        .any(|check| check["name"] == "source" && check["status"] == "pass"));
+    assert!(parsed["checks"]
+        .as_array()
+        .expect("checks array")
+        .iter()
+        .any(|check| check["name"] == "destination" && check["status"] == "pass"));
+}
+
+#[test]
+fn doctor_text_reports_missing_source_as_failure() {
+    let workspace = tempdir().expect("create tempdir");
+    let missing_source = workspace.path().join("missing_source");
+
+    let mut cmd = Command::cargo_bin("organize").expect("binary available");
+    cmd.arg("doctor")
+        .arg("--source")
+        .arg(&missing_source)
+        .assert()
+        .success()
+        .stdout(contains("[FAIL] source"));
+}
+
+#[test]
+fn scan_verbose_text_shows_diagnostics_sources() {
+    let workspace = tempdir().expect("create tempdir");
+    let source = workspace.path().join("scan_verbose_source");
+
+    fs::create_dir_all(source.join("Show.Name.Season.01")).expect("create source dir");
+    fs::write(
+        source.join("Show.Name.Season.01").join("Episode.02.mkv"),
+        b"video",
+    )
+    .expect("write test media");
+
+    let mut cmd = Command::cargo_bin("organize").expect("binary available");
+    cmd.arg("-v")
+        .arg("scan")
+        .arg(&source)
+        .assert()
+        .success()
+        .stdout(contains("Parser:  auto"))
+        .stdout(contains(
+            "Source:  title=parent, year=missing, season=missing, episode=filename",
+        ))
+        .stdout(contains("Issues:  missing_year, missing_season"));
 }
 
 #[test]
