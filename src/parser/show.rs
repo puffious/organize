@@ -23,12 +23,25 @@ pub fn parse_show(input: &str) -> MediaInfo {
     }
 }
 
-static PATTERN_MULTI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})(?:E\d{1,3})+").expect("valid regex"));
-static PATTERN_RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})-E(\d{1,3})").expect("valid regex"));
-static PATTERN_SE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})").expect("valid regex"));
-static PATTERN_SEASON_ONLY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"));
-static PATTERN_SEASON_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"));
-static PATTERN_EP_ONLY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bE(\d{1,3})\b").expect("valid regex"));
+static PATTERN_MULTI: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})(?:E\d{1,3})+").expect("valid regex"));
+static PATTERN_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})-E(\d{1,3})").expect("valid regex"));
+static PATTERN_SE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)S(\d{1,2})E(\d{1,3})").expect("valid regex"));
+static PATTERN_X: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(\d{1,2})x(\d{1,3})\b").expect("valid regex"));
+static PATTERN_SEASON_EPISODE_WORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)Season\s*(\d{1,2})\s*Episode\s*(\d{1,3})").expect("valid regex")
+});
+static PATTERN_SEASON_ONLY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"));
+static PATTERN_SEASON_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"));
+static PATTERN_EP_ONLY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bE(\d{1,3})\b").expect("valid regex"));
+static PATTERN_EPISODE_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Episode\s*(\d{1,3})").expect("valid regex"));
 
 fn extract_season_episode(normalized: &str) -> (Option<u16>, Option<u16>) {
     if let Some(c) = PATTERN_MULTI.captures(normalized) {
@@ -49,6 +62,18 @@ fn extract_season_episode(normalized: &str) -> (Option<u16>, Option<u16>) {
         return (s, e);
     }
 
+    if let Some(c) = PATTERN_X.captures(normalized) {
+        let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
+        let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
+        return (s, e);
+    }
+
+    if let Some(c) = PATTERN_SEASON_EPISODE_WORD.captures(normalized) {
+        let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
+        let e = c.get(2).and_then(|m| m.as_str().parse::<u16>().ok());
+        return (s, e);
+    }
+
     if let Some(c) = PATTERN_SEASON_ONLY.captures(normalized) {
         let s = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         return (s, None);
@@ -60,6 +85,11 @@ fn extract_season_episode(normalized: &str) -> (Option<u16>, Option<u16>) {
     }
 
     if let Some(c) = PATTERN_EP_ONLY.captures(normalized) {
+        let e = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
+        return (None, e);
+    }
+
+    if let Some(c) = PATTERN_EPISODE_WORD.captures(normalized) {
         let e = c.get(1).and_then(|m| m.as_str().parse::<u16>().ok());
         return (None, e);
     }
@@ -152,5 +182,21 @@ mod tests {
         assert_eq!(info.title.as_deref(), Some("Black Mirror"));
         assert_eq!(info.year, Some(2011));
         assert_eq!(info.season, Some(4));
+    }
+
+    #[test]
+    fn parses_x_episode_pattern() {
+        let info = parse_show("Show.Name.1x03.1080p.WEB-DL.mkv");
+        assert_eq!(info.title.as_deref(), Some("Show Name"));
+        assert_eq!(info.season, Some(1));
+        assert_eq!(info.episode, Some(3));
+    }
+
+    #[test]
+    fn parses_season_episode_words() {
+        let info = parse_show("Show Name Season 2 Episode 5 1080p.mkv");
+        assert_eq!(info.title.as_deref(), Some("Show Name"));
+        assert_eq!(info.season, Some(2));
+        assert_eq!(info.episode, Some(5));
     }
 }

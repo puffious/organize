@@ -33,10 +33,31 @@ pub struct Operation {
     pub kind: OperationKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnparseableReason {
+    MissingTitle,
+    MissingSeasonOrEpisode,
+    UserSkippedInteractiveResolution,
+}
+
+impl UnparseableReason {
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::MissingTitle => "missing title",
+            Self::MissingSeasonOrEpisode => "missing season or episode",
+            Self::UserSkippedInteractiveResolution => "user skipped interactive resolution",
+        }
+    }
+
+    pub fn should_display(self) -> bool {
+        !matches!(self, Self::UserSkippedInteractiveResolution)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UnparseableItem {
     pub path: PathBuf,
-    pub reason: String,
+    pub reason: UnparseableReason,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +107,7 @@ pub fn build_show_plan(
         let (Some(title), Some(season), Some(_episode)) = (title, season, episode) else {
             plan.unparseable.push(UnparseableItem {
                 path: src,
-                reason: "missing title, season, or episode".to_string(),
+                reason: UnparseableReason::MissingSeasonOrEpisode,
             });
             continue;
         };
@@ -146,7 +167,7 @@ pub fn build_movie_plan(
         let Some(title) = title else {
             plan.unparseable.push(UnparseableItem {
                 path: src,
-                reason: "missing title".to_string(),
+                reason: UnparseableReason::MissingTitle,
             });
             continue;
         };
@@ -171,7 +192,13 @@ pub fn build_movie_plan(
     }
 
     if let NonMediaPolicy::Keep = non_media_mode {
-        attach_non_media(scan, &mut plan, mode, None, default_target_folder.as_deref());
+        attach_non_media(
+            scan,
+            &mut plan,
+            mode,
+            None,
+            default_target_folder.as_deref(),
+        );
     }
 
     Ok(plan)
@@ -231,13 +258,15 @@ fn build_destination_maps(
     let mut video_key_to_dest = HashMap::<(PathBuf, String), PathBuf>::new();
 
     for op in &plan.operations {
-        if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent()) {
+        if let (Some(src_parent), Some(dst_parent)) = (op.source.parent(), op.destination.parent())
+        {
             dir_to_dest
                 .entry(src_parent.to_path_buf())
                 .or_insert_with(|| dst_parent.to_path_buf());
 
             if let Some(stem) = lower_stem(&op.source) {
-                video_key_to_dest.insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
+                video_key_to_dest
+                    .insert((src_parent.to_path_buf(), stem), dst_parent.to_path_buf());
             }
         }
     }
@@ -457,6 +486,10 @@ mod tests {
 
         assert_eq!(plan.operations.len(), 0);
         assert_eq!(plan.unparseable.len(), 1);
+        assert_eq!(
+            plan.unparseable[0].reason,
+            UnparseableReason::MissingSeasonOrEpisode
+        );
     }
 
     #[test]
@@ -735,6 +768,15 @@ mod tests {
         assert_eq!(
             plan.conflict_details[0].blocked_by.as_deref(),
             Some(blocked_parent.as_path())
+        );
+    }
+
+    #[test]
+    fn user_skipped_reason_is_hidden_from_verbose_output() {
+        assert!(!UnparseableReason::UserSkippedInteractiveResolution.should_display());
+        assert_eq!(
+            UnparseableReason::UserSkippedInteractiveResolution.description(),
+            "user skipped interactive resolution"
         );
     }
 }

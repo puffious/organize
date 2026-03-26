@@ -1,5 +1,21 @@
 use anyhow::Result;
 use dialoguer::{Confirm, Input};
+use std::path::Path;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShowGroupPrompt {
+    pub title: Option<String>,
+    pub parent_path: String,
+    pub file_count: usize,
+    pub missing_season: bool,
+    pub missing_episode: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ShowGroupResolution {
+    pub season: Option<u16>,
+    pub episode: Option<u16>,
+}
 
 pub fn confirm_execute() -> Result<bool> {
     let answer = Confirm::new()
@@ -30,25 +46,68 @@ pub fn ask_for_year(title: Option<&str>) -> Result<Option<u16>> {
     Ok(text.trim().parse::<u16>().ok())
 }
 
-pub fn ask_for_season() -> Result<Option<u16>> {
-    let season: String = Input::new()
-        .allow_empty(true)
-        .with_prompt("Season number")
-        .interact_text()?;
-    if season.trim().is_empty() {
-        return Ok(None);
+pub fn ask_for_show_group_metadata(
+    context: &ShowGroupPrompt,
+) -> Result<Option<ShowGroupResolution>> {
+    let target = context
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty())
+        .map(|title| format!("\"{}\"", title))
+        .unwrap_or_else(|| "this group".to_string());
+    let file_label = if context.file_count == 1 {
+        "file"
+    } else {
+        "files"
+    };
+    println!(
+        "Missing show metadata for {} in {} ({} {}). Leave blank to skip this group.",
+        target,
+        display_parent_path(&context.parent_path).display(),
+        context.file_count,
+        file_label
+    );
+
+    let mut resolution = ShowGroupResolution::default();
+
+    if context.missing_season {
+        let prompt = if context.missing_episode {
+            "Season number"
+        } else {
+            "Season number (leave blank to skip this group)"
+        };
+        let Some(season) = ask_for_number(prompt)? else {
+            return Ok(None);
+        };
+        resolution.season = Some(season);
     }
-    Ok(season.trim().parse::<u16>().ok())
+
+    if context.missing_episode {
+        let prompt = if context.missing_season {
+            "Episode number"
+        } else {
+            "Episode number (leave blank to skip this group)"
+        };
+        let Some(episode) = ask_for_number(prompt)? else {
+            return Ok(None);
+        };
+        resolution.episode = Some(episode);
+    }
+
+    Ok(Some(resolution))
 }
 
-pub fn ask_for_episode() -> Result<Option<u16>> {
-    let episode: String = Input::new()
+fn ask_for_number(prompt: &str) -> Result<Option<u16>> {
+    let value: String = Input::new()
         .allow_empty(true)
-        .with_prompt("Episode number")
+        .with_prompt(prompt)
         .interact_text()?;
-    if episode.trim().is_empty() {
+    if value.trim().is_empty() {
         return Ok(None);
     }
-    Ok(episode.trim().parse::<u16>().ok())
+    Ok(value.trim().parse::<u16>().ok())
 }
 
+fn display_parent_path(path: &str) -> &Path {
+    Path::new(path)
+}

@@ -3,9 +3,10 @@ pub mod show;
 pub mod tokens;
 
 use regex::Regex;
+use serde::Serialize;
 use std::sync::LazyLock;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MediaInfo {
     pub title: Option<String>,
     pub year: Option<u16>,
@@ -24,8 +25,11 @@ pub fn parse_movie(input: &str) -> MediaInfo {
     movie::parse_movie(input)
 }
 
-static YEAR_PAREN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((19\d{2}|20\d{2})\)").expect("valid regex"));
-static YEAR_STANDALONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^0-9])(19\d{2}|20\d{2})(?:[^0-9]|$)").expect("valid regex"));
+static YEAR_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\((19\d{2}|20\d{2})\)").expect("valid regex"));
+static YEAR_STANDALONE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^0-9])(19\d{2}|20\d{2})(?:[^0-9]|$)").expect("valid regex")
+});
 
 pub fn extract_year_from_input(input: &str) -> Option<u16> {
     if let Some(c) = YEAR_PAREN.captures(input) {
@@ -38,8 +42,10 @@ pub fn extract_year_from_input(input: &str) -> Option<u16> {
         .and_then(|m| m.as_str().parse::<u16>().ok())
 }
 
-static SEASON_S: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"));
-static SEASON_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"));
+static SEASON_S: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})\b").expect("valid regex"));
+static SEASON_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Season\s*(\d{1,2})").expect("valid regex"));
 
 pub fn extract_season_from_input(input: &str) -> Option<u16> {
     let lower = input.to_ascii_lowercase();

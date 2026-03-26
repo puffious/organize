@@ -55,12 +55,17 @@ fn normalize_api_key(value: &mut String) {
 }
 
 fn normalize_log_file(value: &mut Option<PathBuf>) {
-    if value.as_ref().is_some_and(|path| path.as_os_str().is_empty()) {
+    if value
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
         *value = None;
     }
 }
 
-fn deserialize_optional_mode<'de, D>(deserializer: D) -> std::result::Result<Option<EffectiveOperationMode>, D::Error>
+fn deserialize_optional_mode<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<EffectiveOperationMode>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -131,7 +136,7 @@ impl AppConfig {
                     cfg.general.auto_confirm = true;
                 }
             }
-            Commands::Scan(_) => {}
+            Commands::Scan(_) | Commands::Doctor(_) => {}
         }
 
         normalize_api_key(&mut cfg.tmdb.api_key);
@@ -360,7 +365,7 @@ fn load_file(path: &PathBuf) -> Result<PartialConfig> {
     Ok(parsed)
 }
 
-fn global_config_path() -> Option<PathBuf> {
+pub fn global_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("organize").join("config.toml"))
 }
 
@@ -427,11 +432,7 @@ mod tests {
     fn load_file_rejects_invalid_default_mode() {
         let dir = tempdir().expect("create tempdir");
         let path = dir.path().join("invalid.toml");
-        fs::write(
-            &path,
-            "[general]\ndefault_mode = \"teleport\"\n",
-        )
-        .expect("write invalid config");
+        fs::write(&path, "[general]\ndefault_mode = \"teleport\"\n").expect("write invalid config");
 
         load_file(&path).expect_err("invalid default_mode should fail parsing");
     }

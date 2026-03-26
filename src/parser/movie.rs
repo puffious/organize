@@ -44,4 +44,18 @@ mod tests {
         let info = parse_movie("Breaking.Bad.S01E01.Pilot.1080p.BluRay.x265.HEVC.10bit-CAKES.mkv");
         assert_eq!(info.title.as_deref(), Some("Breaking Bad"));
     }
+
+    #[test]
+    fn parses_bracket_heavy_movie_release() {
+        let info = parse_movie("Movie.Title.[2023].[1080p].[WEB-DL].[x265].mkv");
+        assert_eq!(info.title.as_deref(), Some("Movie Title"));
+        assert_eq!(info.year, Some(2023));
+    }
+
+    #[test]
+    fn parses_remux_movie_release() {
+        let info = parse_movie("Movie Title (2021) [4K Remux HEVC TrueHD].mkv");
+        assert_eq!(info.title.as_deref(), Some("Movie Title"));
+        assert_eq!(info.year, Some(2021));
+    }
 }

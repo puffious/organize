@@ -33,6 +33,7 @@ pub enum Commands {
     Show(ShowMovieArgs),
     Movie(ShowMovieArgs),
     Scan(ScanArgs),
+    Doctor(DoctorArgs),
 }
 
 #[derive(Debug, clap::Args, Clone)]
@@ -97,6 +98,26 @@ pub struct ScanArgs {
         help = "Only include items at or above this parse confidence"
     )]
     pub min_confidence: Option<ConfidenceArg>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        requires = "json",
+        help = "Write JSON report to a file (requires --json)"
+    )]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, clap::Args, Clone)]
+pub struct DoctorArgs {
+    #[arg(long, value_name = "PATH")]
+    pub source: Option<PathBuf>,
+
+    #[arg(long, value_name = "PATH")]
+    pub destination: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false, help = "Output structured JSON report")]
+    pub json: bool,
 
     #[arg(
         long,

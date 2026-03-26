@@ -23,20 +23,29 @@ pub fn extract_extension(name: &str) -> String {
     }
 }
 
-static BOUNDARY_PATTERNS: LazyLock<[Regex; 10]> = LazyLock::new(|| {
+static BOUNDARY_PATTERNS: LazyLock<[Regex; 15]> = LazyLock::new(|| {
     [
         Regex::new(r"(?i)\bS\d{1,2}E\d{1,3}(?:E\d{1,3})*(?:-E\d{1,3})?\b").expect("valid regex"),
+        Regex::new(r"(?i)\b\d{1,2}x\d{1,3}\b").expect("valid regex"),
+        Regex::new(r"(?i)\bSeason\s*\d{1,2}\s*Episode\s*\d{1,3}\b").expect("valid regex"),
+        Regex::new(r"(?i)\bEpisode\s*\d{1,3}\b").expect("valid regex"),
         Regex::new(r"(?i)\bS\d{1,2}\b").expect("valid regex"),
         Regex::new(r"(?i)\bSeason\s*\d{1,2}\b").expect("valid regex"),
         Regex::new(r"\((19\d{2}|20\d{2})\)").expect("valid regex"),
         Regex::new(r"\b(19\d{2}|20\d{2})\b").expect("valid regex"),
         Regex::new(r"(?i)\b(480p|720p|1080p|2160p|4K)\b").expect("valid regex"),
-        Regex::new(r"(?i)\b(BluRay|BRRip|WEB-DL|WEBRip|HDTV|DVDRip|DRPO)\b").expect("valid regex"),
+        Regex::new(r"(?i)\b(BluRay|BRRip|WEB-DL|WEBRip|HDTV|DVDRip|DRPO|Remux|UHD)\b")
+            .expect("valid regex"),
         Regex::new(r"(?i)\b(x264|x265|H\.?264|H\.?265|HEVC|AVC|AV1|XviD|DivX)\b")
             .expect("valid regex"),
         Regex::new(r"(?i)\b(AAC(2\.0|5\.1)?|AC3|DTS|FLAC|MP3|EAC3|Atmos|TrueHD)\b")
             .expect("valid regex"),
         Regex::new(r"(?i)\b(SDR|HDR|HDR10\+?|DV|DoVi|Dolby\s*Vision)\b").expect("valid regex"),
+        Regex::new(r"(?i)\b(REMUX|PROPER|REPACK|EXTENDED)\b").expect("valid regex"),
+        Regex::new(
+            r"(?i)\[[^\]]*(480p|720p|1080p|2160p|4K|BluRay|WEB-DL|WEBRip|HEVC|x265|Remux)[^\]]*\]",
+        )
+        .expect("valid regex"),
     ]
 });
 
@@ -68,8 +77,7 @@ pub fn extract_title(normalized: &str) -> Option<String> {
 
 pub fn clean_title(raw: &str) -> String {
     raw.trim()
-        .trim_end_matches('-')
-        .trim_end_matches(':')
+        .trim_end_matches(['-', ':', '[', '('])
         .trim()
         .to_string()
 }

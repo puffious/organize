@@ -39,7 +39,11 @@ pub fn scan_source(source: &Path, exts: &MediaExtensions) -> Result<ScanResult> 
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => {
-                warn!("skipping unreadable path under {}: {}", source.display(), err);
+                warn!(
+                    "skipping unreadable path under {}: {}",
+                    source.display(),
+                    err
+                );
                 continue;
             }
         };
@@ -118,7 +122,11 @@ pub fn clean_empty_dirs(source: &Path) -> Result<()> {
             .is_none();
         if is_empty {
             if let Err(err) = std::fs::remove_dir(&dir) {
-                warn!("failed to remove empty directory {}: {}", dir.display(), err);
+                warn!(
+                    "failed to remove empty directory {}: {}",
+                    dir.display(),
+                    err
+                );
             }
         }
     }
